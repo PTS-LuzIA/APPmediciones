@@ -34,7 +34,7 @@ class UsuarioResponse(UsuarioBase):
     es_admin: bool
     activo: bool
     fecha_creacion: datetime
-    fecha_actualizacion: datetime
+    ultimo_acceso: Optional[datetime] = None
 
     class Config:
         from_attributes = True

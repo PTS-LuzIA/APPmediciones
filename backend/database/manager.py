@@ -12,8 +12,9 @@ from pathlib import Path
 # Añadir el directorio backend al path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from models import Proyecto, Nodo, Concepto, Medicion, TipoConcepto
+from models import Proyecto, Nodo, Concepto, Medicion, TipoConcepto, Usuario
 from database.queries import QueryHelper
+from utils.security import hash_password
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,86 @@ class DatabaseManager:
         if exc_type is not None:
             self.session.rollback()
         self.session.close()
+
+    # =====================================================
+    # USUARIOS
+    # =====================================================
+
+    def crear_usuario(
+        self,
+        username: str,
+        email: str,
+        password: str,
+        nombre_completo: str = None,
+        empresa: str = None,
+        es_admin: bool = False
+    ) -> Usuario:
+        """
+        Crea un nuevo usuario.
+
+        Args:
+            username: Nombre de usuario único
+            email: Email único
+            password: Contraseña en texto plano (se hasheará)
+            nombre_completo: Nombre completo opcional
+            empresa: Empresa opcional
+            es_admin: Si es administrador
+
+        Returns:
+            Usuario creado
+        """
+        usuario = Usuario(
+            username=username,
+            email=email,
+            password_hash=hash_password(password),
+            nombre_completo=nombre_completo,
+            empresa=empresa,
+            es_admin=es_admin,
+            activo=True
+        )
+
+        self.session.add(usuario)
+        self.session.commit()
+        logger.info(f"✓ Usuario creado: {username}")
+        return usuario
+
+    def obtener_usuario(self, usuario_id: int) -> Optional[Usuario]:
+        """Obtiene un usuario por ID"""
+        return self.session.query(Usuario).filter_by(id=usuario_id).first()
+
+    def actualizar_usuario(
+        self,
+        usuario_id: int,
+        email: str = None,
+        nombre_completo: str = None,
+        password: str = None
+    ) -> Optional[Usuario]:
+        """
+        Actualiza datos de un usuario.
+
+        Args:
+            usuario_id: ID del usuario
+            email: Nuevo email (opcional)
+            nombre_completo: Nuevo nombre (opcional)
+            password: Nueva contraseña en texto plano (opcional)
+
+        Returns:
+            Usuario actualizado o None si no existe
+        """
+        usuario = self.obtener_usuario(usuario_id)
+        if not usuario:
+            return None
+
+        if email:
+            usuario.email = email
+        if nombre_completo:
+            usuario.nombre_completo = nombre_completo
+        if password:
+            usuario.password_hash = hash_password(password)
+
+        self.session.commit()
+        logger.info(f"✓ Usuario actualizado: {usuario_id}")
+        return usuario
 
     # =====================================================
     # PROYECTOS
