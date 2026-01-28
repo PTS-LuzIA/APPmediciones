@@ -69,35 +69,17 @@ export default function EditarProyectoPage({ params }: { params: { id: string } 
 
       const proyecto = await response.json()
 
-      // Marcar fases completadas basándose en el estado del proyecto
+      // Marcar fases completadas basándose en fase_actual del proyecto
+      // fase_actual: 0=no procesado, 1=fase1, 2=fase2, 3=fase3, 4=completo
       setFases(prev => prev.map(f => {
         // Preservar estado 'procesando' si existe
         if (f.estado === 'procesando') return f
 
-        // Fase 1: Si hay capítulos
-        if (f.numero === 1 && proyecto.capitulos && proyecto.capitulos.length > 0) {
+        // Marcar como completada si fase_actual >= numero de fase
+        if (proyecto.fase_actual >= f.numero) {
           return { ...f, estado: 'completada' as FaseEstado }
         }
-        // Fase 2: Si hay partidas en algún subcapítulo
-        if (f.numero === 2) {
-          const tienePartidas = proyecto.capitulos?.some((cap: any) =>
-            cap.subcapitulos?.some((sub: any) => sub.partidas && sub.partidas.length > 0)
-          )
-          if (tienePartidas) {
-            return { ...f, estado: 'completada' as FaseEstado }
-          }
-        }
-        // Fase 3: Si tiene presupuesto_total Y tiene partidas (indicador de Fase 2 ejecutada)
-        // No marcar como completada solo con presupuesto_total porque puede ser inicial del PDF
-        if (f.numero === 3) {
-          const tienePartidas = proyecto.capitulos?.some((cap: any) =>
-            cap.subcapitulos?.some((sub: any) => sub.partidas && sub.partidas.length > 0)
-          )
-          // Solo si tiene partidas Y tiene presupuesto > 0
-          if (tienePartidas && proyecto.presupuesto_total && proyecto.presupuesto_total > 0) {
-            return { ...f, estado: 'completada' as FaseEstado }
-          }
-        }
+
         return f
       }))
 
@@ -120,7 +102,8 @@ export default function EditarProyectoPage({ params }: { params: { id: string } 
 
     try {
       const token = localStorage.getItem('token')
-      const response = await fetch(`${API_URL}/api/proyectos/${proyectoId}/fase${numeroFase}`, {
+      // Ruta correcta: /api/procesamiento/{id}/fase{N}
+      const response = await fetch(`${API_URL}/api/procesamiento/${proyectoId}/fase${numeroFase}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`

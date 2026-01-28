@@ -25,6 +25,7 @@ from database.manager import DatabaseManager
 from database.queries import QueryHelper
 from models import Usuario
 from services.proyecto_service import ProyectoService
+from services.procesamiento_service import ProcesamientoService
 from config import settings
 
 router = APIRouter()
@@ -142,12 +143,45 @@ async def upload_pdf(
         proyecto_obj.pdf_hash = file_hash
         manager.session.commit()
 
-    return {
-        "proyecto_id": proyecto.id,
-        "nombre": proyecto.nombre,
-        "pdf_nombre": file.filename,
-        "message": "PDF uploaded successfully. Processing will be available in future updates."
-    }
+    # Process PDF using PDFOrchestrator
+    try:
+        procesamiento_service = ProcesamientoService(manager.session)
+        resultado = procesamiento_service.procesar_pdf_completo(
+            proyecto_id=proyecto.id,
+            user_id=current_user.id,
+            pdf_path=str(file_path)
+        )
+
+        # Get statistics from result
+        stats = resultado.get('estadisticas', {})
+
+        return {
+            "proyecto_id": proyecto.id,
+            "nombre": proyecto.nombre,
+            "pdf_nombre": file.filename,
+            "message": "PDF uploaded and processed successfully",
+            "procesamiento": {
+                "tipo_documento": resultado.get('metadata', {}).get('tipo_documento'),
+                "parser_usado": resultado.get('metadata', {}).get('parser_usado'),
+                "num_capitulos": stats.get('num_capitulos', 0),
+                "num_subcapitulos": stats.get('num_subcapitulos', 0),
+                "num_partidas": stats.get('num_partidas', 0)
+            }
+        }
+
+    except Exception as e:
+        # If processing fails, still return success for upload but log error
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error processing PDF: {str(e)}")
+
+        return {
+            "proyecto_id": proyecto.id,
+            "nombre": proyecto.nombre,
+            "pdf_nombre": file.filename,
+            "message": "PDF uploaded successfully but processing failed",
+            "error": str(e)
+        }
 
 
 @router.get("/{proyecto_id}", response_model=ProyectoCompleto)
@@ -171,22 +205,40 @@ async def obtener_proyecto(
         HTTPException: If project not found or user doesn't have access
     """
     service = ProyectoService(db)
-    proyecto = service.obtener_proyecto_completo(proyecto_id)
+    resultado = service.obtener_proyecto_completo(proyecto_id)
 
-    if not proyecto:
+    if not resultado:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found"
         )
 
+    proyecto_obj = resultado["proyecto"]
+    estadisticas = resultado.get("estadisticas", {})
+
     # Check user has access
-    if proyecto["usuario_id"] != current_user.id and not current_user.es_admin:
+    if proyecto_obj.usuario_id != current_user.id and not current_user.es_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this project"
         )
 
-    return ProyectoCompleto(**proyecto)
+    # Create response with statistics
+    return ProyectoCompleto(
+        id=proyecto_obj.id,
+        usuario_id=proyecto_obj.usuario_id,
+        nombre=proyecto_obj.nombre,
+        descripcion=proyecto_obj.descripcion,
+        pdf_path=proyecto_obj.pdf_path,
+        fase_actual=proyecto_obj.fase_actual,
+        total_presupuesto=proyecto_obj.total_presupuesto,
+        fecha_creacion=proyecto_obj.fecha_creacion,
+        fecha_actualizacion=proyecto_obj.fecha_actualizacion,
+        num_capitulos=estadisticas.get("num_capitulos", 0),
+        num_partidas=estadisticas.get("num_partidas", 0),
+        num_mediciones=estadisticas.get("num_mediciones", 0)
+    )
+
 
 
 @router.put("/{proyecto_id}", response_model=ProyectoResponse)
