@@ -46,7 +46,7 @@ async def listar_proyectos(
     Returns:
         List of projects
     """
-    proyectos = manager.listar_proyectos(current_user.id, skip=skip, limit=limit)
+    proyectos = manager.listar_proyectos(current_user.id, offset=skip, limite=limit)
     return [ProyectoResponse.model_validate(p) for p in proyectos]
 
 
