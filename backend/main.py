@@ -61,8 +61,9 @@ async def startup_event():
     # Verificar conexión a base de datos
     try:
         from database.connection import engine
+        from sqlalchemy import text
         with engine.connect() as conn:
-            result = conn.execute("SELECT 1")
+            result = conn.execute(text("SELECT 1"))
             logger.info("✓ Conexión a base de datos OK")
     except Exception as e:
         logger.error(f"❌ Error conectando a base de datos: {e}")
