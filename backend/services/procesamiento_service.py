@@ -61,80 +61,97 @@ class ProcesamientoService:
     def ejecutar_fase1(self, proyecto_id: int, pdf_path: str) -> Dict[str, Any]:
         """
         Ejecuta Fase 1: Extracción de estructura.
+        
+        Nota: El nuevo sistema procesa todo automáticamente.
+        Este método es legacy y redirige al procesamiento completo.
 
         Args:
             proyecto_id: ID del proyecto
             pdf_path: Ruta al PDF
 
         Returns:
-            Resultado de Fase 1
+            Resultado parcial de Fase 1
         """
         logger.info(f"🔧 [FASE 1] Iniciando para proyecto {proyecto_id}")
-
-        # Crear parser
-        parser = PresupuestoParser(pdf_path, proyecto_id)
-
-        # Ejecutar Fase 1
-        resultado = parser.ejecutar_fase1()
-
-        # Guardar en base de datos
-        self._guardar_fase1_en_bd(proyecto_id, resultado)
-
-        logger.info(f"✓ Fase 1 completada y guardada en BD")
-        return resultado
+        
+        # Obtener user_id del proyecto
+        proyecto = self.manager.obtener_proyecto(proyecto_id)
+        if not proyecto:
+            raise ValueError(f"Proyecto {proyecto_id} no encontrado")
+        
+        # Ejecutar procesamiento completo
+        resultado = self.procesar_pdf_completo(proyecto_id, proyecto.usuario_id, pdf_path)
+        
+        # Devolver solo la estructura (compatibilidad con API anterior)
+        logger.info(f"✓ Fase 1 completada")
+        return {
+            'estructura': resultado.get('estructura', {}),
+            'metadata': resultado.get('metadata', {}),
+            'estadisticas': resultado.get('estadisticas', {})
+        }
 
     def ejecutar_fase2(self, proyecto_id: int, pdf_path: str) -> Dict[str, Any]:
         """
         Ejecuta Fase 2: Extracción de partidas.
+        
+        Nota: El nuevo sistema procesa todo automáticamente.
+        Este método es legacy y redirige al procesamiento completo.
 
         Args:
             proyecto_id: ID del proyecto
             pdf_path: Ruta al PDF
 
         Returns:
-            Resultado de Fase 2
+            Resultado parcial de Fase 2
         """
         logger.info(f"🔧 [FASE 2] Iniciando para proyecto {proyecto_id}")
-
-        # Crear parser
-        parser = PresupuestoParser(pdf_path, proyecto_id)
-
-        # Ejecutar Fase 1 (necesaria para tener estructura)
-        parser.ejecutar_fase1()
-
-        # Ejecutar Fase 2
-        resultado = parser.ejecutar_fase2()
-
-        # Guardar en base de datos
-        self._guardar_fase2_en_bd(proyecto_id, resultado)
-
-        logger.info(f"✓ Fase 2 completada y guardada en BD")
+        
+        # Obtener user_id del proyecto
+        proyecto = self.manager.obtener_proyecto(proyecto_id)
+        if not proyecto:
+            raise ValueError(f"Proyecto {proyecto_id} no encontrado")
+        
+        # Si ya está procesado, no reprocesar
+        if proyecto.fase_actual >= 2:
+            logger.info("✓ Proyecto ya procesado, retornando resultado existente")
+            return {'message': 'Proyecto ya procesado', 'fase_actual': proyecto.fase_actual}
+        
+        # Ejecutar procesamiento completo
+        resultado = self.procesar_pdf_completo(proyecto_id, proyecto.usuario_id, pdf_path)
+        
+        logger.info(f"✓ Fase 2 completada")
         return resultado
 
     def ejecutar_fase3(self, proyecto_id: int, pdf_path: str) -> Dict[str, Any]:
         """
         Ejecuta Fase 3: Cálculo de totales y validación.
+        
+        Nota: El nuevo sistema procesa todo automáticamente.
+        Este método es legacy y redirige al procesamiento completo.
 
         Args:
             proyecto_id: ID del proyecto
             pdf_path: Ruta al PDF
 
         Returns:
-            Resultado de Fase 3
+            Resultado parcial de Fase 3
         """
         logger.info(f"🔧 [FASE 3] Iniciando para proyecto {proyecto_id}")
-
-        # Crear parser
-        parser = PresupuestoParser(pdf_path, proyecto_id)
-
-        # Ejecutar fases 1 y 2
-        parser.ejecutar_fase1()
-        parser.ejecutar_fase2()
-
-        # Ejecutar Fase 3
-        resultado = parser.ejecutar_fase3()
-
-        logger.info(f"✓ Fase 3 completada: {resultado['num_discrepancias']} discrepancias")
+        
+        # Obtener user_id del proyecto
+        proyecto = self.manager.obtener_proyecto(proyecto_id)
+        if not proyecto:
+            raise ValueError(f"Proyecto {proyecto_id} no encontrado")
+        
+        # Si ya está procesado, no reprocesar
+        if proyecto.fase_actual >= 3:
+            logger.info("✓ Proyecto ya procesado, retornando resultado existente")
+            return {'message': 'Proyecto ya procesado', 'fase_actual': proyecto.fase_actual}
+        
+        # Ejecutar procesamiento completo
+        resultado = self.procesar_pdf_completo(proyecto_id, proyecto.usuario_id, pdf_path)
+        
+        logger.info(f"✓ Fase 3 completada")
         return resultado
 
     # =====================================================
