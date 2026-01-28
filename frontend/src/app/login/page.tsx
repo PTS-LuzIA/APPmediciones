@@ -29,7 +29,7 @@ export default function LoginPage() {
     if (AUTO_LOGIN) {
       const autoLogin = async () => {
         try {
-          const response = await login('admin', 'admin123')
+          const response = await login('test', 'test123')
           setAuth(response.access_token, response.user)
           router.push('/dashboard')
         } catch (err: any) {
@@ -40,7 +40,7 @@ export default function LoginPage() {
       }
       autoLogin()
     }
-  }, [])
+  }, [router, setAuth])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -66,7 +66,7 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-600 rounded-full mb-4">
             <FileText className="h-8 w-8 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-4">Mediciones V2</h1>
+          <h1 className="text-3xl font-bold text-gray-900 mb-4">APPmediciones</h1>
           <div className="flex items-center justify-center space-x-2">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
             <p className="text-gray-600">Iniciando sesión automáticamente...</p>
@@ -85,7 +85,7 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-600 rounded-full mb-4">
             <FileText className="h-8 w-8 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">Mediciones V2</h1>
+          <h1 className="text-3xl font-bold text-gray-900">APPmediciones</h1>
           <p className="text-gray-600 mt-2">Sistema de Gestión de Presupuestos</p>
         </div>
 
@@ -116,7 +116,7 @@ export default function LoginPage() {
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="admin"
+                placeholder="test"
                 required
                 autoFocus
               />
@@ -148,10 +148,10 @@ export default function LoginPage() {
                 Credenciales de demostración:
               </p>
               <p className="text-xs text-gray-600">
-                Usuario: <code className="bg-white px-1 py-0.5 rounded">admin</code>
+                Usuario: <code className="bg-white px-1 py-0.5 rounded">test</code>
               </p>
               <p className="text-xs text-gray-600">
-                Contraseña: <code className="bg-white px-1 py-0.5 rounded">admin123</code>
+                Contraseña: <code className="bg-white px-1 py-0.5 rounded">test123</code>
               </p>
             </div>
           </CardContent>
@@ -159,7 +159,7 @@ export default function LoginPage() {
 
         {/* Footer */}
         <p className="text-center text-sm text-gray-600 mt-8">
-          Sistema de Mediciones V2 - Enero 2026
+          APPmediciones - Sistema de Gestión de Presupuestos - Enero 2026
         </p>
       </div>
     </div>
