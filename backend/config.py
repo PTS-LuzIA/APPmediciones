@@ -17,10 +17,10 @@ class Settings(BaseSettings):
     API_TITLE: str = "APPmediciones API"
     API_VERSION: str = "1.0.0"
     API_HOST: str = "0.0.0.0"
-    API_PORT: int = 8001
+    API_PORT: int = 8005
 
     # Base de datos
-    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/appmediciones_db"
+    DATABASE_URL: str = "postgresql://imac@localhost:5432/appmediciones_db"
 
     # JWT
     JWT_SECRET: str = "dev-secret-key-change-in-production-12345"
@@ -29,8 +29,7 @@ class Settings(BaseSettings):
 
     # CORS
     CORS_ORIGINS: list = [
-        "http://localhost:3001",
-        "http://localhost:3000",
+        "http://localhost:3016",
     ]
 
     # Paths
