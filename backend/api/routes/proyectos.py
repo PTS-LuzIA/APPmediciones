@@ -2,11 +2,13 @@
 Proyecto Routes
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
 import sys
 from pathlib import Path
+import hashlib
+import shutil
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
@@ -23,6 +25,7 @@ from database.manager import DatabaseManager
 from database.queries import QueryHelper
 from models import Usuario
 from services.proyecto_service import ProyectoService
+from config import settings
 
 router = APIRouter()
 
@@ -73,6 +76,78 @@ async def crear_proyecto(
         descripcion=proyecto_data.descripcion
     )
     return ProyectoResponse.model_validate(proyecto)
+
+
+@router.post("/upload")
+async def upload_pdf(
+    file: UploadFile = File(...),
+    current_user: Usuario = Depends(get_current_user),
+    manager: DatabaseManager = Depends(get_database_manager)
+):
+    """
+    Upload a PDF file and create a new project.
+
+    Args:
+        file: PDF file to upload
+        current_user: Current authenticated user
+        manager: Database manager
+
+    Returns:
+        dict with proyecto_id
+
+    Raises:
+        HTTPException: If file is not a PDF or exceeds size limit
+    """
+    # Validate file type
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF files are allowed"
+        )
+
+    # Read file content
+    file_content = await file.read()
+
+    # Validate file size
+    if len(file_content) > settings.MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File size exceeds maximum allowed ({settings.MAX_UPLOAD_SIZE / 1024 / 1024} MB)"
+        )
+
+    # Calculate file hash
+    file_hash = hashlib.md5(file_content).hexdigest()
+
+    # Create project name from filename
+    proyecto_nombre = file.filename.replace('.pdf', '')
+
+    # Save file
+    file_path = settings.UPLOADS_DIR / f"u{current_user.id}_p_{file_hash}_{file.filename}"
+    with open(file_path, 'wb') as f:
+        f.write(file_content)
+
+    # Create project
+    proyecto = manager.crear_proyecto(
+        usuario_id=current_user.id,
+        nombre=proyecto_nombre,
+        descripcion=f"Proyecto creado desde PDF: {file.filename}"
+    )
+
+    # Update project with PDF info
+    from models import Proyecto
+    proyecto_obj = manager.session.query(Proyecto).filter_by(id=proyecto.id).first()
+    if proyecto_obj:
+        proyecto_obj.pdf_path = str(file_path)
+        proyecto_obj.pdf_nombre = file.filename
+        proyecto_obj.pdf_hash = file_hash
+        manager.session.commit()
+
+    return {
+        "proyecto_id": proyecto.id,
+        "nombre": proyecto.nombre,
+        "pdf_nombre": file.filename,
+        "message": "PDF uploaded successfully. Processing will be available in future updates."
+    }
 
 
 @router.get("/{proyecto_id}", response_model=ProyectoCompleto)
