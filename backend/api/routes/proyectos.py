@@ -231,7 +231,7 @@ async def obtener_proyecto(
         descripcion=proyecto_obj.descripcion,
         pdf_path=proyecto_obj.pdf_path,
         fase_actual=proyecto_obj.fase_actual,
-        total_presupuesto=proyecto_obj.total_presupuesto,
+        total_presupuesto=proyecto_obj.presupuesto_total,
         fecha_creacion=proyecto_obj.fecha_creacion,
         fecha_actualizacion=proyecto_obj.fecha_actualizacion,
         num_capitulos=estadisticas.get("num_capitulos", 0),
