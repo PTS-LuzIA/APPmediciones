@@ -102,15 +102,22 @@ async def health_check():
 
 
 # =====================================================
-# INCLUIR ROUTERS (cuando estén creados)
+# INCLUIR ROUTERS
 # =====================================================
 
-# TODO: Descomentar cuando estén creados los routers
-# from api.routes import proyectos, nodos, conceptos, auth
-# app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
-# app.include_router(proyectos.router, prefix="/api/proyectos", tags=["Proyectos"])
-# app.include_router(nodos.router, prefix="/api/nodos", tags=["Nodos"])
-# app.include_router(conceptos.router, prefix="/api/conceptos", tags=["Conceptos"])
+from api.routes import (
+    auth_router,
+    proyectos_router,
+    nodos_router,
+    conceptos_router,
+    procesamiento_router
+)
+
+app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(proyectos_router, prefix="/api/proyectos", tags=["Proyectos"])
+app.include_router(nodos_router, prefix="/api/nodos", tags=["Nodos"])
+app.include_router(conceptos_router, prefix="/api/conceptos", tags=["Conceptos"])
+app.include_router(procesamiento_router, prefix="/api/procesamiento", tags=["Procesamiento"])
 
 
 # =====================================================

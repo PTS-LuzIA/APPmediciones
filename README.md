@@ -1,6 +1,19 @@
 # APPmediciones
 
+**Estado**: ✅ **BACKEND COMPLETO** - Ready for Testing
+**Versión**: 1.0.0
+**Fecha**: 2026-01-27
+
 Sistema de gestión de presupuestos de construcción basado en estructura jerárquica (compatible con BC3/FIEBDC-3).
+
+## 📖 Documentation Quick Links
+
+- 🚀 **[QUICKSTART.md](QUICKSTART.md)** - Step-by-step setup instructions
+- 📋 **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - What has been implemented
+- 🏗️ **[docs/ARQUITECTURA.md](docs/ARQUITECTURA.md)** - Detailed architecture
+- 🛣️ **[docs/API.md](docs/API.md)** - Complete API reference (35 endpoints)
+- 🧪 **[docs/TESTING.md](docs/TESTING.md)** - Testing guide with examples
+- 📊 **[STATUS.md](STATUS.md)** - Current state and roadmap
 
 ## 🏗️ Arquitectura
 
