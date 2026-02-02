@@ -14,88 +14,121 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Función para matar procesos en un puerto
+kill_port() {
+    local PORT=$1
+    local PIDS=$(lsof -ti:$PORT 2>/dev/null)
+
+    if [ ! -z "$PIDS" ]; then
+        echo -e "${YELLOW}Killing processes on port $PORT: $PIDS${NC}"
+        echo $PIDS | xargs kill -9 2>/dev/null
+        sleep 1
+        return 0
+    fi
+    return 1
+}
+
 # Detener Backend
+echo -e "\n${YELLOW}Stopping Backend...${NC}"
+
+# 1. Matar por PID file si existe
 if [ -f "logs/backend.pid" ]; then
     BACKEND_PID=$(cat logs/backend.pid)
-    echo -e "\n${YELLOW}Stopping Backend (PID: $BACKEND_PID)...${NC}"
-
     if ps -p $BACKEND_PID > /dev/null 2>&1; then
-        kill $BACKEND_PID
-        sleep 2
-
-        # Forzar si todavía está corriendo
-        if ps -p $BACKEND_PID > /dev/null 2>&1; then
-            echo -e "${YELLOW}Force killing backend...${NC}"
-            kill -9 $BACKEND_PID
-        fi
-
-        echo -e "${GREEN}✓ Backend stopped${NC}"
-    else
-        echo -e "${YELLOW}Backend process not running${NC}"
+        echo -e "Killing backend PID: $BACKEND_PID"
+        kill -9 $BACKEND_PID 2>/dev/null
     fi
-
     rm -f logs/backend.pid
-else
-    echo -e "${YELLOW}No backend PID file found${NC}"
-
-    # Intentar matar por puerto
-    BACKEND_PIDS=$(lsof -ti:8005)
-    if [ ! -z "$BACKEND_PIDS" ]; then
-        echo -e "${YELLOW}Found process on port 8005, stopping...${NC}"
-        kill $BACKEND_PIDS 2>/dev/null || kill -9 $BACKEND_PIDS 2>/dev/null
-        echo -e "${GREEN}✓ Process on port 8005 stopped${NC}"
-    fi
 fi
 
-# Detener Frontend (cuando esté disponible)
+# 2. Matar por puerto 8005
+kill_port 8005
+
+# 3. Matar procesos python main.py en el directorio backend
+pkill -9 -f "python.*main.py" 2>/dev/null
+
+# 4. Matar procesos uvicorn en puerto 8005
+pkill -9 -f "uvicorn.*8005" 2>/dev/null
+
+sleep 2
+
+# Verificar que el puerto 8005 esté libre
+if lsof -ti:8005 >/dev/null 2>&1; then
+    echo -e "${YELLOW}Port 8005 still occupied, force killing...${NC}"
+    lsof -ti:8005 | xargs kill -9 2>/dev/null
+    sleep 1
+fi
+
+if ! lsof -ti:8005 >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ Backend stopped (port 8005 free)${NC}"
+else
+    echo -e "${RED}❌ Could not free port 8005${NC}"
+fi
+
+# Detener Frontend
+echo -e "\n${YELLOW}Stopping Frontend...${NC}"
+
+# 1. Matar por PID file si existe
 if [ -f "logs/frontend.pid" ]; then
     FRONTEND_PID=$(cat logs/frontend.pid)
-    echo -e "\n${YELLOW}Stopping Frontend (PID: $FRONTEND_PID)...${NC}"
-
     if ps -p $FRONTEND_PID > /dev/null 2>&1; then
-        kill $FRONTEND_PID
-        sleep 2
-
-        # Forzar si todavía está corriendo
-        if ps -p $FRONTEND_PID > /dev/null 2>&1; then
-            echo -e "${YELLOW}Force killing frontend...${NC}"
-            kill -9 $FRONTEND_PID
-        fi
-
-        echo -e "${GREEN}✓ Frontend stopped${NC}"
-    else
-        echo -e "${YELLOW}Frontend process not running${NC}"
+        echo -e "Killing frontend PID: $FRONTEND_PID"
+        kill -9 $FRONTEND_PID 2>/dev/null
     fi
-
     rm -f logs/frontend.pid
-else
-    # Intentar matar por puerto
-    FRONTEND_PIDS=$(lsof -ti:3016)
-    if [ ! -z "$FRONTEND_PIDS" ]; then
-        echo -e "${YELLOW}Found process on port 3016, stopping...${NC}"
-        kill $FRONTEND_PIDS 2>/dev/null || kill -9 $FRONTEND_PIDS 2>/dev/null
-        echo -e "${GREEN}✓ Process on port 3016 stopped${NC}"
-    fi
 fi
 
-# Verificar que los puertos estén libres
-echo -e "\n${YELLOW}Verifying ports...${NC}"
+# 2. Matar por puerto 3016
+kill_port 3016
 
-if lsof -Pi :8005 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+# 3. Matar procesos next-server
+pkill -9 -f "next-server" 2>/dev/null
+pkill -9 -f "next dev" 2>/dev/null
+pkill -9 -f "npm.*dev.*3016" 2>/dev/null
+
+sleep 2
+
+# Verificar que el puerto 3016 esté libre
+if lsof -ti:3016 >/dev/null 2>&1; then
+    echo -e "${YELLOW}Port 3016 still occupied, force killing...${NC}"
+    lsof -ti:3016 | xargs kill -9 2>/dev/null
+    sleep 1
+fi
+
+if ! lsof -ti:3016 >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ Frontend stopped (port 3016 free)${NC}"
+else
+    echo -e "${RED}❌ Could not free port 3016${NC}"
+fi
+
+# Verificación final
+echo -e "\n${YELLOW}Final verification...${NC}"
+
+BACKEND_OK=true
+FRONTEND_OK=true
+
+if lsof -ti:8005 >/dev/null 2>&1; then
     echo -e "${RED}❌ Port 8005 still in use${NC}"
+    BACKEND_OK=false
 else
     echo -e "${GREEN}✓ Port 8005 is free${NC}"
 fi
 
-if lsof -Pi :3016 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+if lsof -ti:3016 >/dev/null 2>&1; then
     echo -e "${RED}❌ Port 3016 still in use${NC}"
+    FRONTEND_OK=false
 else
     echo -e "${GREEN}✓ Port 3016 is free${NC}"
 fi
 
 echo ""
 echo "=========================================="
-echo -e "${GREEN}✓ APPmediciones Stopped${NC}"
+if [ "$BACKEND_OK" = true ] && [ "$FRONTEND_OK" = true ]; then
+    echo -e "${GREEN}✓ APPmediciones Stopped Successfully${NC}"
+else
+    echo -e "${YELLOW}⚠ Some processes may still be running${NC}"
+    echo -e "Try: lsof -i :8005 and lsof -i :3016"
+fi
 echo "=========================================="
 echo ""
 echo "Note: PostgreSQL is still running"

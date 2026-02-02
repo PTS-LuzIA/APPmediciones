@@ -4,8 +4,6 @@
 # APPmediciones - Start Script
 # =====================================================
 
-set -e
-
 echo "=========================================="
 echo "🚀 Starting APPmediciones"
 echo "=========================================="
@@ -16,6 +14,13 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Directorio del script
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR"
+
+# Crear directorio de logs si no existe
+mkdir -p logs
+
 # Verificar PostgreSQL
 echo -e "\n${YELLOW}Checking PostgreSQL...${NC}"
 if ! pg_isready -h localhost -p 5432 > /dev/null 2>&1; then
@@ -25,7 +30,7 @@ if ! pg_isready -h localhost -p 5432 > /dev/null 2>&1; then
     # Intentar iniciar PostgreSQL (ajustar según sistema)
     if command -v brew &> /dev/null; then
         # macOS con Homebrew
-        brew services start postgresql@14 || brew services start postgresql
+        brew services start postgresql@14 2>/dev/null || brew services start postgresql 2>/dev/null
     elif command -v systemctl &> /dev/null; then
         # Linux con systemd
         sudo systemctl start postgresql
@@ -65,55 +70,56 @@ elif [ -d ".venv" ]; then
     source .venv/bin/activate
     echo -e "${GREEN}✓ Virtual environment activated${NC}"
 else
-    echo -e "${YELLOW}⚠ No virtual environment found (venv or .venv)${NC}"
+    echo -e "${YELLOW}⚠ No virtual environment found (using system Python)${NC}"
 fi
 
-# Instalar dependencias si es necesario
-if [ -f "backend/requirements.txt" ]; then
-    echo -e "\n${YELLOW}Checking Python dependencies...${NC}"
-    pip install -q -r backend/requirements.txt
-    echo -e "${GREEN}✓ Dependencies installed${NC}"
+# Verificar que los puertos estén libres antes de iniciar
+echo -e "\n${YELLOW}Checking ports...${NC}"
+
+if lsof -ti:8005 >/dev/null 2>&1; then
+    echo -e "${YELLOW}Port 8005 in use, stopping existing process...${NC}"
+    lsof -ti:8005 | xargs kill -9 2>/dev/null
+    sleep 2
+fi
+
+if lsof -ti:3016 >/dev/null 2>&1; then
+    echo -e "${YELLOW}Port 3016 in use, stopping existing process...${NC}"
+    lsof -ti:3016 | xargs kill -9 2>/dev/null
+    sleep 2
 fi
 
 # Iniciar Backend
 echo -e "\n${YELLOW}Starting Backend API (port 8005)...${NC}"
-cd backend
-
-# Verificar si ya hay un proceso corriendo en el puerto 8005
-if lsof -Pi :8005 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
-    echo -e "${RED}❌ Port 8005 is already in use${NC}"
-    echo -e "${YELLOW}Run ./stop.sh first to stop existing services${NC}"
-    exit 1
-fi
+cd "$SCRIPT_DIR/backend"
 
 # Iniciar backend en background
-nohup python main.py > ../logs/backend.log 2>&1 &
+nohup python main.py > "$SCRIPT_DIR/logs/backend.log" 2>&1 &
 BACKEND_PID=$!
-echo $BACKEND_PID > ../logs/backend.pid
+echo $BACKEND_PID > "$SCRIPT_DIR/logs/backend.pid"
 
 # Esperar a que el backend esté listo
-sleep 3
+echo -e "Waiting for backend to start..."
+for i in {1..10}; do
+    if lsof -ti:8005 >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
 
-if ps -p $BACKEND_PID > /dev/null; then
+if lsof -ti:8005 >/dev/null 2>&1; then
     echo -e "${GREEN}✓ Backend started (PID: $BACKEND_PID)${NC}"
 else
     echo -e "${RED}❌ Failed to start backend${NC}"
-    cat ../logs/backend.log
+    echo -e "${YELLOW}Last 20 lines of backend.log:${NC}"
+    tail -20 "$SCRIPT_DIR/logs/backend.log"
     exit 1
 fi
 
-cd ..
+cd "$SCRIPT_DIR"
 
 # Iniciar Frontend
 echo -e "\n${YELLOW}Starting Frontend (port 3016)...${NC}"
-cd frontend
-
-# Verificar si ya hay un proceso corriendo en el puerto 3016
-if lsof -Pi :3016 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
-    echo -e "${RED}❌ Port 3016 is already in use${NC}"
-    echo -e "${YELLOW}Run ./stop.sh first to stop existing services${NC}"
-    exit 1
-fi
+cd "$SCRIPT_DIR/frontend"
 
 # Verificar si node_modules existe, si no, instalar dependencias
 if [ ! -d "node_modules" ]; then
@@ -123,22 +129,29 @@ if [ ! -d "node_modules" ]; then
 fi
 
 # Iniciar frontend en background
-nohup npm run dev > ../logs/frontend.log 2>&1 &
+nohup npm run dev > "$SCRIPT_DIR/logs/frontend.log" 2>&1 &
 FRONTEND_PID=$!
-echo $FRONTEND_PID > ../logs/frontend.pid
+echo $FRONTEND_PID > "$SCRIPT_DIR/logs/frontend.pid"
 
 # Esperar a que el frontend esté listo
-sleep 5
+echo -e "Waiting for frontend to start..."
+for i in {1..15}; do
+    if lsof -ti:3016 >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
 
-if ps -p $FRONTEND_PID > /dev/null; then
+if lsof -ti:3016 >/dev/null 2>&1; then
     echo -e "${GREEN}✓ Frontend started (PID: $FRONTEND_PID)${NC}"
 else
     echo -e "${RED}❌ Failed to start frontend${NC}"
-    cat ../logs/frontend.log | tail -20
+    echo -e "${YELLOW}Last 20 lines of frontend.log:${NC}"
+    tail -20 "$SCRIPT_DIR/logs/frontend.log"
     exit 1
 fi
 
-cd ..
+cd "$SCRIPT_DIR"
 
 echo ""
 echo "=========================================="

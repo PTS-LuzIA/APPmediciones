@@ -92,10 +92,10 @@ export default function ProyectoDetallePage({ params }: { params: { id: string }
   }
 
   // Preparar datos para gráficos
-  const chartData = proyecto.capitulos.slice(0, 6).map(cap => ({
+  const chartData = proyecto.capitulos?.slice(0, 6).map(cap => ({
     nombre: cap.codigo,
     total: Number(cap.total)
-  }))
+  })) || []
 
   return (
     <div className="space-y-6">
@@ -280,6 +280,12 @@ export default function ProyectoDetallePage({ params }: { params: { id: string }
           <CardDescription>Jerarquía completa de capítulos, subcapítulos y partidas</CardDescription>
         </CardHeader>
         <CardContent>
+          {!proyecto.capitulos || proyecto.capitulos.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <p>No hay estructura disponible aún.</p>
+              <p className="text-sm mt-2">La estructura se mostrará después de procesar el PDF.</p>
+            </div>
+          ) : (
           <div className="space-y-2">
             {proyecto.capitulos.map((capitulo) => (
               <div key={capitulo.id} className="border border-gray-200 rounded-lg">
@@ -299,33 +305,83 @@ export default function ProyectoDetallePage({ params }: { params: { id: string }
                         {capitulo.codigo} - {capitulo.nombre}
                       </p>
                       <p className="text-sm text-gray-600">
-                        {capitulo.subcapitulos.length} subcapítulos
+                        Nivel {capitulo.nivel} • {capitulo.subcapitulos?.length || 0} subcapítulos • {capitulo.partidas?.length || 0} partidas
                       </p>
                     </div>
                   </div>
                   <div className="text-right">
                     <p className="font-semibold text-gray-900">
                       {formatEuros(Number(capitulo.total))}
-                      {capitulo.total_calculado && Math.abs(Number(capitulo.total) - Number(capitulo.total_calculado)) > 0.01 && (
-                        <span className="text-xs text-yellow-600 ml-1">
-                          ({formatEuros(Number(capitulo.total_calculado))})
-                        </span>
-                      )}
+                      {capitulo.total_calculado && Math.abs(Number(capitulo.total) - Number(capitulo.total_calculado)) > 0.01 && (() => {
+                        const diferencia = Number(capitulo.total) - Number(capitulo.total_calculado);
+                        const signo = diferencia > 0 ? '+' : '';
+                        return (
+                          <span className={`text-xs ml-2 font-medium ${diferencia > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            (Δ {signo}{formatEuros(diferencia)})
+                          </span>
+                        );
+                      })()}
                     </p>
                   </div>
                 </button>
 
-                {/* Subcapítulos */}
-                {expandedCapitulos.has(capitulo.id) && (
+                {/* Subcapítulos y Partidas */}
+                {expandedCapitulos.has(capitulo.id) && (capitulo.subcapitulos?.length > 0 || capitulo.partidas?.length > 0) && (
                   <div className="border-t border-gray-200 bg-gray-50">
-                    {capitulo.subcapitulos.map((subcap) =>
-                      renderSubcapituloNode(subcap, 1)
+                    {/* Subcapítulos */}
+                    {capitulo.subcapitulos && capitulo.subcapitulos.length > 0 && (
+                      <div>
+                        {capitulo.subcapitulos.map((subcap) =>
+                          renderSubcapituloNode(subcap, 1)
+                        )}
+                      </div>
+                    )}
+
+                    {/* Partidas directas del capítulo (sin subcapítulo) */}
+                    {capitulo.partidas && capitulo.partidas.length > 0 && (
+                      <div className="bg-white">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-gray-200 bg-gray-50">
+                                <th className="text-left py-2 px-4 pl-8 font-medium text-gray-700">Código</th>
+                                <th className="text-left py-2 px-4 font-medium text-gray-700">Descripción</th>
+                                <th className="text-center py-2 px-4 font-medium text-gray-700">Ud</th>
+                                <th className="text-right py-2 px-4 font-medium text-gray-700">Cantidad</th>
+                                <th className="text-right py-2 px-4 font-medium text-gray-700">Precio</th>
+                                <th className="text-right py-2 px-4 font-medium text-gray-700">Importe</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {capitulo.partidas.map((partida) => (
+                                <tr key={partida.id} className="border-b border-gray-100 hover:bg-gray-50">
+                                  <td className="py-2 px-4 pl-8 font-mono text-xs">{partida.codigo}</td>
+                                  <td className="py-2 px-4">
+                                    <div className="font-semibold text-gray-900">{partida.resumen}</div>
+                                    {partida.descripcion && (
+                                      <div className="text-xs text-gray-500 mt-1">
+                                        {partida.descripcion.substring(0, 100)}
+                                        {partida.descripcion.length > 100 ? '...' : ''}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-4 text-center text-gray-600">{partida.unidad}</td>
+                                  <td className="py-2 px-4 text-right">{formatNumber(Number(partida.cantidad))}</td>
+                                  <td className="py-2 px-4 text-right">{formatNumber(Number(partida.precio))}</td>
+                                  <td className="py-2 px-4 text-right font-medium">{formatEuros(Number(partida.importe))}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}
               </div>
             ))}
           </div>
+          )}
         </CardContent>
       </Card>
     </div>
@@ -360,18 +416,22 @@ export default function ProyectoDetallePage({ params }: { params: { id: string }
                 {subcap.codigo} - {subcap.nombre}
               </p>
               <p className="text-sm text-gray-600">
-                Nivel {subcap.nivel} • {subcap.partidas.length} partidas
+                Nivel {subcap.nivel} • {subcap.partidas?.length || 0} partidas
               </p>
             </div>
           </div>
           <div className="text-right">
             <p className="font-medium text-gray-900">
               {formatEuros(Number(subcap.total))}
-              {subcap.total_calculado && Math.abs(Number(subcap.total) - Number(subcap.total_calculado)) > 0.01 && (
-                <span className="text-xs text-yellow-600 ml-1">
-                  ({formatEuros(Number(subcap.total_calculado))})
-                </span>
-              )}
+              {subcap.total_calculado && Math.abs(Number(subcap.total) - Number(subcap.total_calculado)) > 0.01 && (() => {
+                const diferencia = Number(subcap.total) - Number(subcap.total_calculado);
+                const signo = diferencia > 0 ? '+' : '';
+                return (
+                  <span className={`text-xs ml-2 font-medium ${diferencia > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    (Δ {signo}{formatEuros(diferencia)})
+                  </span>
+                );
+              })()}
             </p>
           </div>
         </button>
@@ -384,7 +444,7 @@ export default function ProyectoDetallePage({ params }: { params: { id: string }
         )}
 
         {/* Partidas */}
-        {expandedSubcapitulos.has(subcap.id) && hasPartidas && (
+        {expandedSubcapitulos.has(subcap.id) && hasPartidas && subcap.partidas && (
                           <div className="bg-white">
                             <div className="overflow-x-auto">
                               <table className="w-full text-sm">
@@ -412,7 +472,7 @@ export default function ProyectoDetallePage({ params }: { params: { id: string }
                                         )}
                                       </td>
                                       <td className="py-2 px-4 text-center text-gray-600">{partida.unidad}</td>
-                                      <td className="py-2 px-4 text-right">{formatNumber(Number(partida.cantidad_total))}</td>
+                                      <td className="py-2 px-4 text-right">{formatNumber(Number(partida.cantidad))}</td>
                                       <td className="py-2 px-4 text-right">{formatNumber(Number(partida.precio))}</td>
                                       <td className="py-2 px-4 text-right font-medium">{formatEuros(Number(partida.importe))}</td>
                                     </tr>

@@ -391,7 +391,7 @@ export default function EditarProyectoPage({ params }: { params: { id: string } 
                   onClick={() => ejecutarFase(fase.numero)}
                   disabled={fase.estado === 'procesando'}
                   size="sm"
-                  variant={fase.estado === 'completada' ? 'outline' : 'primary'}
+                  variant={fase.estado === 'completada' ? 'secondary' : 'primary'}
                 >
                   {fase.estado === 'procesando' ? 'Procesando...' :
                    fase.estado === 'completada' ? 'Reejecutar' : 'Ejecutar'}

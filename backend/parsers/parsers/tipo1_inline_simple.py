@@ -336,9 +336,11 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
                 subcapitulos_map = {}  # Reset map
                 logger.debug(f"Capítulo creado: {capitulo_actual['codigo']} - {capitulo_actual['nombre']}")
 
-            elif tipo == TipoLinea.SUBCAPITULO:
+            elif tipo == TipoLinea.SUBCAPITULO or tipo == TipoLinea.APARTADO:
                 codigo = datos.get('codigo', '')
                 nombre = datos.get('nombre', '')
+
+                tipo_texto = "APARTADO" if tipo == TipoLinea.APARTADO else "SUBCAPÍTULO"
 
                 # Determinar nivel del subcapítulo
                 nivel = codigo.count('.')
@@ -354,7 +356,7 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
                     if capitulo_actual:
                         capitulo_actual['subcapitulos'].append(subcapitulo_actual)
                     subcapitulos_map[codigo] = subcapitulo_actual
-                    logger.debug(f"Subcapítulo L1 creado: {codigo} - {nombre}")
+                    logger.info(f"📁 {tipo_texto} Nivel-1 creado: {codigo} - {nombre[:50]}")
 
                 elif nivel >= 2:  # Nivel 2+: XX.YY.ZZ o más
                     # Encontrar padre
@@ -373,7 +375,7 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
 
                     if padre:
                         padre['subcapitulos'].append(nuevo_subcapitulo)
-                        logger.debug(f"Subcapítulo L{nivel} creado bajo {codigo_padre}: {codigo} - {nombre}")
+                        logger.info(f"📁 {tipo_texto} Nivel-{nivel} creado bajo {codigo_padre}: {codigo} - {nombre[:50]}")
                     elif capitulo_actual:
                         # Fallback: crear nivel intermedio automáticamente
                         logger.warning(f"Subcapítulo {codigo} sin padre {codigo_padre}, creando nivel intermedio")
@@ -448,11 +450,11 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
                     es_valido = False
                 elif codigo.upper() in palabras_prohibidas:
                     es_valido = False
-                elif not any(c.isdigit() for c in codigo):
+                elif len(codigo) < 3:
+                    # Rechazar códigos muy cortos (menos de 3 caracteres)
                     es_valido = False
-                elif len(codigo) <= 2:
-                    es_valido = False
-                elif not codigo[-1].isdigit():
+                elif not codigo.replace('.', '').replace('-', '').replace(' ', '').isalnum():
+                    # Rechazar códigos con caracteres no alfanuméricos (excepto ., -, y espacios)
                     es_valido = False
 
                 # Si no es válido, ignorar esta línea
@@ -482,7 +484,8 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
                     'importe': importe,
                     'orden': 0
                 }
-                logger.debug(f"Partida iniciada: {partida_actual['codigo']} (importe inicial: {importe})")
+                contexto = f"subcapítulo {subcapitulo_actual['codigo']}" if subcapitulo_actual else f"capítulo {capitulo_actual['codigo']}" if capitulo_actual else "SIN CONTEXTO"
+                logger.info(f"🆕 Partida iniciada: {partida_actual['codigo']} bajo {contexto} (importe: {importe:.2f} €)")
 
             elif tipo == TipoLinea.PARTIDA_DESCRIPCION:
                 # Agregar línea de descripción
@@ -532,7 +535,7 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
                 if codigo_total and subcapitulo_actual:
                     # Si el TOTAL corresponde al subcapítulo actual, cerrarlo
                     if subcapitulo_actual.get('codigo') == codigo_total:
-                        logger.debug(f"TOTAL cierra subcapítulo {codigo_total}")
+                        logger.info(f"🔚 TOTAL cierra subcapítulo {codigo_total}")
 
                         # Si el subcapítulo tiene padre (nivel 3+), volver al padre
                         partes_codigo = codigo_total.split('.')
@@ -540,16 +543,18 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
                             codigo_padre = '.'.join(partes_codigo[:-1])
                             if codigo_padre in subcapitulos_map:
                                 subcapitulo_actual = subcapitulos_map[codigo_padre]
-                                logger.debug(f"  └─ Volviendo al padre {codigo_padre}")
+                                logger.info(f"  ↪️  Volviendo al subcapítulo padre {codigo_padre}")
                             else:
                                 subcapitulo_actual = None
+                                logger.info(f"  ↪️  No se encontró padre {codigo_padre}, cerrando subcapítulo")
                         else:
                             # Nivel 2 (ej: 01.04), cerrar completamente
                             subcapitulo_actual = None
+                            logger.info(f"  ↪️  Subcapítulo nivel 2 cerrado completamente")
                 else:
                     # TOTAL sin código: cerrar cualquier sección abierta
                     if subcapitulo_actual:
-                        logger.debug(f"TOTAL sin código cierra subcapítulo actual {subcapitulo_actual.get('codigo', '')}")
+                        logger.info(f"🔚 TOTAL sin código cierra subcapítulo actual {subcapitulo_actual.get('codigo', '')}")
                         # Intentar volver al padre si existe
                         codigo_actual = subcapitulo_actual.get('codigo', '')
                         partes_codigo = codigo_actual.split('.')
@@ -557,11 +562,13 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
                             codigo_padre = '.'.join(partes_codigo[:-1])
                             if codigo_padre in subcapitulos_map:
                                 subcapitulo_actual = subcapitulos_map[codigo_padre]
-                                logger.debug(f"  └─ Volviendo al padre {codigo_padre}")
+                                logger.info(f"  ↪️  Volviendo al subcapítulo padre {codigo_padre}")
                             else:
                                 subcapitulo_actual = None
+                                logger.info(f"  ↪️  No se encontró padre, cerrando subcapítulo")
                         else:
                             subcapitulo_actual = None
+                            logger.info(f"  ↪️  Subcapítulo nivel 2 cerrado completamente")
 
         # Cerrar última partida si existe (al final del loop)
         self._cerrar_partida(partida_actual, subcapitulo_actual, capitulo_actual)
@@ -583,8 +590,16 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
 
         # VALIDACIÓN FINAL: Rechazar partidas con código inválido
         codigo = partida_actual.get('codigo', '')
-        if not codigo or len(codigo) <= 2 or not any(c.isdigit() for c in codigo):
-            logger.debug(f"⚠️ Partida descartada (código inválido): {codigo}")
+        # Permitir códigos de 3+ caracteres que sean:
+        # - Solo letras (SYS, GYR, etc.)
+        # - Alfanuméricos con al menos un dígito (E01DFL015, DEM06, etc.)
+        if not codigo or len(codigo) < 3:
+            logger.debug(f"⚠️ Partida descartada (código muy corto): {codigo}")
+            return
+
+        # Verificar que sea alfanumérico (no permitir códigos con solo símbolos)
+        if not codigo.replace('.', '').replace('-', '').replace(' ', '').isalnum():
+            logger.debug(f"⚠️ Partida descartada (código con caracteres inválidos): {codigo}")
             return
 
         # Crear copia para no modificar el original (por si se vuelve a usar)
@@ -601,10 +616,12 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
         # Añadir a la estructura correcta
         if subcapitulo_actual:
             subcapitulo_actual['partidas'].append(partida_final)
-            logger.debug(f"✓ Partida guardada en subcapítulo {subcapitulo_actual['codigo']}: {codigo} = {partida_final['importe']}")
+            logger.info(f"  ✓ Partida guardada en SUBCAPÍTULO {subcapitulo_actual['codigo']}: {codigo} = {partida_final['importe']:.2f} €")
         elif capitulo_actual:
             capitulo_actual['partidas'].append(partida_final)
-            logger.debug(f"✓ Partida guardada en capítulo {capitulo_actual['codigo']}: {codigo} = {partida_final['importe']}")
+            logger.info(f"  ✓ Partida guardada en CAPÍTULO {capitulo_actual['codigo']}: {codigo} = {partida_final['importe']:.2f} €")
+        else:
+            logger.warning(f"  ⚠️ Partida {codigo} no se pudo guardar (sin contexto de capítulo/subcapítulo)")
 
     def _contar_partidas_recursivo(self, estructura: Dict) -> int:
         """Cuenta partidas recursivamente"""

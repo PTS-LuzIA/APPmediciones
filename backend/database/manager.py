@@ -376,6 +376,74 @@ class DatabaseManager:
         """
         return self.queries.obtener_arbol_completo(proyecto_id)
 
+    def construir_arbol_jerarquico(self, proyecto_id: int) -> List[Dict[str, Any]]:
+        """
+        Construye el árbol jerárquico completo con estructura anidada.
+
+        Convierte la lista plana de nodos en una estructura jerárquica donde:
+        - Capítulos son nodos de nivel 1
+        - Cada capítulo/subcapítulo tiene arrays 'subcapitulos' y 'partidas' (vacíos si no tiene)
+
+        Returns:
+            Lista de capítulos con estructura anidada
+        """
+        # Obtener flat list from DB
+        nodos_flat = self.queries.obtener_arbol_completo(proyecto_id)
+
+        if not nodos_flat:
+            return []
+
+        # Build maps
+        nodos_map = {}
+        for nodo in nodos_flat:
+            nodo_id = nodo['nodo_id']
+            nodos_map[nodo_id] = {
+                'id': nodo_id,
+                'codigo': nodo['codigo_concepto'],
+                'nombre': nodo.get('nombre', ''),
+                'resumen': nodo.get('resumen', ''),
+                'descripcion': nodo.get('descripcion', ''),
+                'tipo': nodo.get('tipo', ''),
+                'nivel': nodo['nivel'],
+                'orden': nodo['orden'],
+                'unidad': nodo.get('unidad', ''),
+                'cantidad': float(nodo.get('cantidad') or 0),  # Cantidad del nodo específico
+                'cantidad_total': float(nodo.get('cantidad_total') or 0),  # Total del concepto (para resúmenes)
+                'precio': float(nodo.get('precio') or 0),
+                'total': float(nodo.get('total') or 0),
+                'total_calculado': float(nodo.get('total_calculado') or 0) if nodo.get('total_calculado') else None,
+                'importe': float(nodo.get('importe') or 0),  # Importe del nodo (cantidad × precio)
+                'importe_total': float(nodo.get('importe_total') or 0),  # Total del concepto (para resúmenes)
+                'padre_id': nodo['padre_id'],
+                'subcapitulos': [],
+                'partidas': []
+            }
+
+        # Build hierarchy - find root nodes (nivel=0 or padre_id=None)
+        root_nodes = [n for n in nodos_map.values() if n['padre_id'] is None or n['nivel'] == 0]
+
+        # Build children relationships
+        for nodo in nodos_map.values():
+            if nodo['padre_id'] and nodo['padre_id'] in nodos_map:
+                padre = nodos_map[nodo['padre_id']]
+                # If it's a partida, add to partidas array, otherwise to subcapitulos
+                if nodo['tipo'] == 'PARTIDA':
+                    padre['partidas'].append(nodo)
+                else:
+                    padre['subcapitulos'].append(nodo)
+
+        # Get only capitulos (children of root or nivel=1)
+        capitulos = []
+        for root in root_nodes:
+            # Root nodes' children are capitulos
+            capitulos.extend(root['subcapitulos'])
+
+        # If no children, root nodes themselves are capitulos
+        if not capitulos and root_nodes:
+            capitulos = root_nodes
+
+        return capitulos
+
     def eliminar_nodo(self, nodo_id: int) -> bool:
         """
         Elimina un nodo y todos sus descendientes (cascade).
@@ -488,6 +556,87 @@ class DatabaseManager:
             .order_by(Medicion.orden)
             .all()
         )
+
+    # =====================================================
+    # LIMPIEZA DE DATOS POR FASE
+    # =====================================================
+
+    def limpiar_datos_fase1(self, proyecto_id: int):
+        """
+        Limpia todos los datos del proyecto excepto el nodo raíz.
+
+        Se ejecuta antes de Fase 1 para evitar duplicados.
+        Elimina: capítulos, subcapítulos y partidas (nodos y conceptos).
+
+        Args:
+            proyecto_id: ID del proyecto a limpiar
+        """
+        logger.info(f"🗑️  Limpiando datos de Fase 1 para proyecto {proyecto_id}")
+
+        # Obtener nodo raíz
+        nodo_raiz = self.obtener_nodo_raiz(proyecto_id)
+        if not nodo_raiz:
+            logger.warning(f"No se encontró nodo raíz para proyecto {proyecto_id}")
+            return
+
+        # Eliminar todos los nodos excepto el raíz
+        nodos_eliminados = self.session.execute(
+            text("""
+                DELETE FROM appmediciones.nodos
+                WHERE proyecto_id = :pid AND id != :raiz_id
+            """),
+            {'pid': proyecto_id, 'raiz_id': nodo_raiz.id}
+        ).rowcount
+
+        # Eliminar todos los conceptos excepto el raíz (ROOT)
+        conceptos_eliminados = self.session.execute(
+            text("""
+                DELETE FROM appmediciones.conceptos
+                WHERE proyecto_id = :pid AND codigo != 'ROOT'
+            """),
+            {'pid': proyecto_id}
+        ).rowcount
+
+        self.session.commit()
+        logger.info(f"  ✓ Eliminados {nodos_eliminados} nodos y {conceptos_eliminados} conceptos")
+
+    def limpiar_datos_fase2(self, proyecto_id: int):
+        """
+        Limpia solo las partidas del proyecto.
+
+        Se ejecuta antes de Fase 2 para evitar duplicados.
+        Elimina: solo partidas (nodos y conceptos de tipo PARTIDA).
+        Mantiene: capítulos y subcapítulos.
+
+        Args:
+            proyecto_id: ID del proyecto a limpiar
+        """
+        logger.info(f"🗑️  Limpiando datos de Fase 2 (solo partidas) para proyecto {proyecto_id}")
+
+        # Eliminar nodos de partidas
+        nodos_eliminados = self.session.execute(
+            text("""
+                DELETE FROM appmediciones.nodos
+                WHERE proyecto_id = :pid
+                AND codigo_concepto IN (
+                    SELECT codigo FROM appmediciones.conceptos
+                    WHERE proyecto_id = :pid AND tipo = 'PARTIDA'
+                )
+            """),
+            {'pid': proyecto_id}
+        ).rowcount
+
+        # Eliminar conceptos de partidas
+        conceptos_eliminados = self.session.execute(
+            text("""
+                DELETE FROM appmediciones.conceptos
+                WHERE proyecto_id = :pid AND tipo = 'PARTIDA'
+            """),
+            {'pid': proyecto_id}
+        ).rowcount
+
+        self.session.commit()
+        logger.info(f"  ✓ Eliminadas {conceptos_eliminados} partidas ({nodos_eliminados} nodos)")
 
     # =====================================================
     # MÉTODOS PRIVADOS

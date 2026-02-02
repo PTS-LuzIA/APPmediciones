@@ -274,6 +274,13 @@ async def ejecutar_fase3(
     try:
         resultado = service.ejecutar_fase3(proyecto_id, proyecto.pdf_path)
 
+        # Prepare response with extended data for frontend
+        datos_respuesta = {
+            **resultado,
+            'total_original': resultado.get('total_original', 0),
+            'total_calculado': resultado.get('total_calculado', 0)
+        }
+
         return Fase3Resultado(
             fase=3,
             proyecto_id=proyecto_id,
@@ -282,7 +289,7 @@ async def ejecutar_fase3(
             total_presupuesto=resultado.get('total_presupuesto'),
             num_discrepancias=resultado.get('num_discrepancias', 0),
             discrepancias=resultado.get('discrepancias', []),
-            datos=resultado
+            datos=datos_respuesta
         )
 
     except Exception as e:
@@ -290,4 +297,61 @@ async def ejecutar_fase3(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error executing Fase 3: {str(e)}"
+        )
+
+
+@router.post("/{proyecto_id}/fase4")
+async def ejecutar_fase4(
+    proyecto_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Execute Fase 4: Complete descriptions and finalize.
+
+    Args:
+        proyecto_id: Project ID
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        Fase 4 execution result
+
+    Raises:
+        HTTPException: If project not found, user doesn't have access, or PDF not uploaded
+    """
+    manager = DatabaseManager(db)
+
+    # Verify access
+    verificar_acceso_proyecto(proyecto_id, current_user.id, manager, current_user.es_admin)
+
+    # Get project
+    proyecto = manager.obtener_proyecto(proyecto_id)
+
+    if not proyecto.pdf_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No PDF file uploaded for this project"
+        )
+
+    # Execute Fase 4
+    service = ProcesamientoService(db)
+
+    try:
+        resultado = service.ejecutar_fase4(proyecto_id, proyecto.pdf_path)
+
+        return {
+            "fase": 4,
+            "proyecto_id": proyecto_id,
+            "exito": True,
+            "mensaje": "Fase 4 completed successfully - Project finalized",
+            "estadisticas": resultado.get('estadisticas', {}),
+            "datos": resultado
+        }
+
+    except Exception as e:
+        logger.error(f"Error executing Fase 4 for proyecto {proyecto_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error executing Fase 4: {str(e)}"
         )

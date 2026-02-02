@@ -65,7 +65,9 @@ class QueryHelper:
                     c.total,
                     c.total_calculado,
                     c.cantidad_total,
-                    c.importe_total
+                    c.importe_total,
+                    -- NUEVO: Importe calculado del nodo (cantidad del nodo × precio)
+                    n.cantidad * COALESCE(c.precio, 0) as importe
                 FROM appmediciones.nodos n
                 LEFT JOIN appmediciones.conceptos c
                     ON n.codigo_concepto = c.codigo
@@ -95,7 +97,9 @@ class QueryHelper:
                     c.total,
                     c.total_calculado,
                     c.cantidad_total,
-                    c.importe_total
+                    c.importe_total,
+                    -- NUEVO: Importe calculado del nodo (cantidad del nodo × precio)
+                    n.cantidad * COALESCE(c.precio, 0) as importe
                 FROM appmediciones.nodos n
                 INNER JOIN arbol a ON n.padre_id = a.nodo_id
                 LEFT JOIN appmediciones.conceptos c
@@ -145,7 +149,7 @@ class QueryHelper:
                     FROM appmediciones.nodos n
                     INNER JOIN descendientes d ON n.padre_id = d.id
                 )
-                SELECT COALESCE(SUM(c.importe_total * d.cantidad), 0) as total
+                SELECT COALESCE(SUM(d.cantidad * COALESCE(c.precio, 0)), 0) as total
                 FROM descendientes d
                 INNER JOIN appmediciones.conceptos c
                     ON d.codigo_concepto = c.codigo

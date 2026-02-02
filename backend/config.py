@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     ]
 
     # Paths
-    BASE_DIR: Path = Path(__file__).parent.parent
+    BASE_DIR: Path = Path(__file__).parent  # backend/
     UPLOADS_DIR: Path = BASE_DIR / "uploads"
     LOGS_DIR: Path = BASE_DIR / "logs"
 
@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # Límites
     MAX_UPLOAD_SIZE: int = 50 * 1024 * 1024  # 50 MB
     MAX_FILE_PAGES: int = 500  # Máximo de páginas en PDF
+
+    # AI / LLM Services
+    ANTHROPIC_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
 
     class Config:
         env_file = ".env"

@@ -48,9 +48,10 @@ export interface Partida {
   unidad?: string
   resumen?: string
   descripcion?: string
-  cantidad_total: number
+  cantidad: number              // Cantidad del nodo (específica del subcapítulo)
+  cantidad_total: number        // Cantidad total del concepto (suma de todos los nodos) - solo para resúmenes
   precio: number
-  importe: number
+  importe: number               // Importe calculado del nodo (cantidad × precio)
   tiene_mediciones: boolean
   mediciones_validadas: boolean
   mediciones: MedicionParcial[]

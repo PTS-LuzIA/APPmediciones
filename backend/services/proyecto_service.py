@@ -65,7 +65,7 @@ class ProyectoService:
         Returns:
             {
                 'proyecto': Proyecto,
-                'arbol': [],
+                'arbol': [],  # Nested tree structure with subcapitulos and partidas
                 'estadisticas': {}
             }
         """
@@ -73,8 +73,8 @@ class ProyectoService:
         if not proyecto:
             return None
 
-        # Obtener árbol completo
-        arbol = self.manager.obtener_arbol_completo(proyecto_id)
+        # Obtener árbol jerárquico anidado
+        arbol = self.manager.construir_arbol_jerarquico(proyecto_id)
 
         # Obtener estadísticas
         estadisticas = self.manager.queries.obtener_estadisticas_proyecto(proyecto_id)

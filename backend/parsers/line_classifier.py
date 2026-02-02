@@ -161,15 +161,30 @@ class LineClassifier:
 
         # Subcapítulo implícito: "01.01 LEVANTANDO DE ELEMENTOS" o "01.04.01 PAVIMENTO PERMEABLE"
         # Acepta cualquier número de niveles (1 o más puntos)
+        # IMPORTANTE: Debe verificar que NO sea una partida (no tenga unidad después del código)
         match = cls.PATRON_SUBCAPITULO_IMPLICITO.match(linea)
         if match:
-            return {
-                'tipo': TipoLinea.SUBCAPITULO,
-                'datos': {
-                    'codigo': match.group(1),
-                    'nombre': match.group(2).strip()
+            codigo = match.group(1)
+            nombre = match.group(2).strip()
+
+            # Verificar si la siguiente palabra es una unidad conocida
+            # Si es unidad, es una PARTIDA, no un SUBCAPITULO
+            primera_palabra = nombre.split()[0] if nombre else ""
+            unidades_conocidas = ['UD', 'Ud', 'ud', 'M', 'm', 'M2', 'm2', 'M3', 'm3', 'ML', 'ml',
+                                 'KG', 'Kg', 'kg', 'PA', 'Pa', 'pa', 'H', 'h', 'L', 'l', 'T', 't',
+                                 'D', 'd', 'UF', 'Uf', 'uf']
+
+            if primera_palabra.upper() in [u.upper() for u in unidades_conocidas]:
+                # Es una PARTIDA, no un SUBCAPITULO - continuar con la evaluación
+                pass
+            else:
+                return {
+                    'tipo': TipoLinea.SUBCAPITULO,
+                    'datos': {
+                        'codigo': codigo,
+                        'nombre': nombre
+                    }
                 }
-            }
 
         # Capítulo implícito: "01 FASE 2"
         match = cls.PATRON_CAPITULO_IMPLICITO.match(linea)
