@@ -63,8 +63,9 @@ class LineClassifier:
     # Soporta tanto "m2" como "m²" (superíndice Unicode)
     # Soporta unidades compuestas con barra: ud/d, m/d, etc.
     # Patrón simplificado: CÓDIGO (sin espacios) + UNIDAD + DESCRIPCIÓN
-    # Usa \S+ para el código (cualquier secuencia sin espacios)
-    PATRON_PARTIDA = re.compile(r'^(\S+)\s+(m[2-3²³]?(?:/[a-z]+)?|M[2-3²³]?|Ml|ml|M\.?|m\.|[Uu][Dd]?(?:/[a-z]+)?|[Uu][Ff]|PA|Pa|pa|[Pp][\.:][Aa][\.::]?|kg|Kg|KG|[HhLlTt]|d|D|sm|SM|Sm|mes|MES|Mes|día|dia|Día|Dia|año|Año|sem|Sem)\s+(.+)', re.IGNORECASE)
+    # CÓDIGO debe empezar con mayúscula o número (no minúscula) para evitar falsos positivos
+    # como "migón u otro..." o "Puerta acceso..."
+    PATRON_PARTIDA = re.compile(r'^([A-Z0-9]\S*)\s+(m[2-3²³]?(?:/[a-z]+)?|M[2-3²³]?|Ml|ml|M\.?|m\.|[Uu][Dd]?(?:/[a-z]+)?|[Uu][Ff]|PA|Pa|pa|[Pp][\.:][Aa][\.::]?|kg|Kg|KG|[HhLlTt]|d|D|sm|SM|Sm|mes|MES|Mes|día|dia|Día|Dia|año|Año|sem|Sem)\s+(.+)', re.IGNORECASE)
     # Patrón para partida completa con números al final: CÓDIGO UNIDAD DESCRIPCIÓN CANTIDAD PRECIO IMPORTE
     # Este patrón debe evaluarse ANTES que PATRON_PARTIDA para capturar líneas completas
     # Usa \S+ para código (cualquier secuencia sin espacios) para flexibilidad máxima
@@ -115,7 +116,28 @@ class LineClassifier:
 
         linea = linea.strip()
 
-        # 0. FILTRO: Ignorar líneas de paginación (solo números y espacios)
+        # 0.1 FILTRO: Detectar inicio de sección RESUMEN
+        # Una vez detectado, marcar en el contexto para ignorar capítulos posteriores
+        # Detectar tanto "RESUMEN" solo como "RESUMEN DEL PRESUPUESTO" o variantes
+        if re.match(r'^RESUMEN(\s|$)', linea, re.IGNORECASE):
+            if contexto is None:
+                contexto = {}
+            contexto['en_seccion_resumen'] = True
+            logger.info(f"🚫 Sección RESUMEN detectada, ignorando capítulos posteriores: '{linea}'")
+            return {'tipo': TipoLinea.IGNORAR, 'datos': None}
+
+        # 0.2 FILTRO: Si estamos en sección RESUMEN, no clasificar como capítulos
+        # Esto evita que el resumen final duplique los capítulos
+        if contexto and contexto.get('en_seccion_resumen', False):
+            # Solo detectar TOTALES, ignorar todo lo demás (incluyendo posibles capítulos)
+            if re.match(r'^TOTAL', linea, re.IGNORECASE):
+                return {'tipo': TipoLinea.TOTAL, 'datos': {'texto': linea}}
+            # Log si se está ignorando una línea que parece capítulo
+            if re.match(r'^C\d{2}', linea):
+                logger.debug(f"🚫 Ignorando capítulo en sección RESUMEN: '{linea[:50]}'")
+            return {'tipo': TipoLinea.IGNORAR, 'datos': None}
+
+        # 0.3 FILTRO: Ignorar líneas de paginación (solo números y espacios)
         # Ejemplos: "62", "63 63", "1 2", "123"
         # Esto evita que "63 63" se clasifique incorrectamente como capítulo
         if re.match(r'^\d+(?:\s+\d+)*\s*$', linea):
@@ -250,6 +272,12 @@ class LineClassifier:
                 codigo = header_match.group(1).strip()
                 unidad = header_match.group(2).strip()
                 resumen = header_match.group(3).strip()
+
+                # Validación adicional: el código debe contener al menos un dígito o un punto
+                # Esto evita códigos como "Puerta", "migón" que son palabras comunes
+                if not any(c.isdigit() or c == '.' for c in codigo):
+                    # No es un código válido, ignorar
+                    return {'tipo': TipoLinea.IGNORAR, 'datos': None}
 
                 # Caso normal: partida con código + unidad + resumen
                 return {
@@ -427,6 +455,18 @@ class LineClassifier:
                         not patron_importe.match(codigo_detectado) and
                         len(titulo_detectado.split()) >= 2):
 
+                        # Validación adicional: el código debe contener al menos un dígito o un punto
+                        if not any(c.isdigit() or c == '.' for c in codigo_detectado):
+                            # No es un código válido (ej: "Puerta"), ignorar y tratar como datos
+                            return {
+                                'tipo': TipoLinea.PARTIDA_DATOS,
+                                'datos': {
+                                    'cantidad_str': numeros_match.group(1),
+                                    'precio_str': numeros_match.group(2),
+                                    'importe_str': numeros_match.group(3)
+                                }
+                            }
+
                         # Parece una partida válida con unidad solapada/faltante
                         logger.warning(f"⚠️  Partida sin unidad detectada: código='{codigo_detectado}', título='{titulo_detectado[:30]}...'")
                         logger.warning(f"   Probable solapamiento visual - asignando unidad='X'")
@@ -460,6 +500,12 @@ class LineClassifier:
             codigo = match.group(1).strip()
             unidad = match.group(2).strip()
             resumen = match.group(3).strip()
+
+            # Validación adicional: el código debe contener al menos un dígito o un punto
+            # Esto evita códigos como "Puerta", "migón" que son palabras comunes
+            if not any(c.isdigit() or c == '.' for c in codigo):
+                # No es un código válido, ignorar
+                return {'tipo': TipoLinea.IGNORAR, 'datos': None}
 
             # Caso normal: partida con código + unidad + resumen
             return {
@@ -703,13 +749,14 @@ class LineClassifier:
                 'datos': clasificacion['datos']
             })
 
-            # Actualizar contexto
+            # Actualizar contexto (mantener flags existentes como en_seccion_resumen)
             if clasificacion['tipo'] == TipoLinea.PARTIDA_HEADER:
                 contexto['partida_activa'] = True
             elif clasificacion['tipo'] == TipoLinea.PARTIDA_DATOS:
                 contexto['partida_activa'] = False
             elif clasificacion['tipo'] in [TipoLinea.CAPITULO, TipoLinea.SUBCAPITULO, TipoLinea.APARTADO]:
                 contexto['partida_activa'] = False
+            # Nota: en_seccion_resumen se mantiene automáticamente porque el contexto es un dict mutable
 
         # POST-PROCESAMIENTO: Unir líneas de descripción continuadas
         resultados = cls._unir_descripciones_continuadas(resultados)

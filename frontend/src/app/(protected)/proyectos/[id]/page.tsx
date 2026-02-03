@@ -91,11 +91,8 @@ export default function ProyectoDetallePage({ params }: { params: { id: string }
     )
   }
 
-  // Preparar datos para gráficos
-  const chartData = proyecto.capitulos?.slice(0, 6).map(cap => ({
-    nombre: cap.codigo,
-    total: Number(cap.total)
-  })) || []
+  // Calcular presupuesto total sumando todos los capítulos
+  const presupuestoCalculado = proyecto.capitulos?.reduce((sum, cap) => sum + Number(cap.total || 0), 0) || 0
 
   return (
     <div className="space-y-6">
@@ -147,7 +144,7 @@ export default function ProyectoDetallePage({ params }: { params: { id: string }
               <div>
                 <p className="text-sm text-gray-600">Presupuesto Total</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {formatEuros(Number(proyecto.presupuesto_total))}
+                  {formatEuros(presupuestoCalculado)}
                 </p>
               </div>
               <TrendingUp className="h-8 w-8 text-green-600" />
@@ -248,27 +245,6 @@ export default function ProyectoDetallePage({ params }: { params: { id: string }
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Gráfico */}
-      {chartData.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Distribución por Capítulos</CardTitle>
-            <CardDescription>Presupuesto de los principales capítulos</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="nombre" />
-                <YAxis />
-                <Tooltip formatter={(value) => formatEuros(Number(value))} />
-                <Bar dataKey="total" fill="#3b82f6" />
-              </BarChart>
-            </ResponsiveContainer>
           </CardContent>
         </Card>
       )}

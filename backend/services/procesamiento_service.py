@@ -406,6 +406,28 @@ class ProcesamientoService:
         # Determinar tipo
         tipo = TipoConcepto.CAPITULO if nivel == 1 else TipoConcepto.SUBCAPITULO
 
+        # 1. Verificar duplicados en la misma sesión de procesamiento
+        if codigo in codigo_a_nodo_id:
+            logger.warning(f"⚠️ Capítulo/subcapítulo duplicado en misma sesión, omitido: {codigo} - {nombre}")
+            return  # Ya procesamos este código en esta sesión
+
+        # 2. Verificar si ya existe un concepto duplicado en BD (mismo código, nombre, tipo y total)
+        concepto_duplicado = self.db.execute(
+            text("""
+                SELECT id FROM appmediciones.conceptos
+                WHERE proyecto_id = :pid
+                  AND codigo = :codigo
+                  AND nombre = :nombre
+                  AND tipo = :tipo
+                  AND ABS(COALESCE(total, 0) - :total) < 0.01
+            """),
+            {'pid': proyecto_id, 'codigo': codigo, 'nombre': nombre, 'tipo': tipo.value, 'total': total or 0}
+        ).fetchone()
+
+        if concepto_duplicado:
+            logger.warning(f"⚠️ Capítulo/subcapítulo duplicado detectado y omitido: {codigo} - {nombre} (total: {total})")
+            return  # Skip creating both concepto and nodo
+
         # Crear concepto si no existe
         concepto_existente = self.manager.obtener_concepto(proyecto_id, codigo)
         if not concepto_existente:
@@ -870,6 +892,8 @@ class ProcesamientoService:
         try:
             # Obtener conceptos con discrepancias
             # Umbral: diferencia absoluta >= 0.05€ (descarta errores de redondeo)
+            # IMPORTANTE: Solo incluir nodos HOJA (sin hijos de tipo SUBCAPITULO/PARTIDA)
+            # para evitar duplicar partidas en capítulos padre
             discrepancias_query = self.db.execute(
                 text("""
                     SELECT
@@ -893,6 +917,16 @@ class ProcesamientoService:
                         AND c.total IS NOT NULL
                         AND c.total > 0
                         AND ABS(COALESCE(c.total, 0) - COALESCE(c.total_calculado, 0)) >= 0.05
+                        -- Excluir solo nodos que tienen SUBCAPÍTULOS como hijos
+                        -- (permitir nodos que solo tienen PARTIDAS, estos son válidos para resolver)
+                        AND NOT EXISTS (
+                            SELECT 1 FROM appmediciones.nodos n2
+                            INNER JOIN appmediciones.conceptos c2
+                                ON n2.codigo_concepto = c2.codigo
+                                AND n2.proyecto_id = c2.proyecto_id
+                            WHERE n2.padre_id = n.id
+                                AND c2.tipo = 'SUBCAPITULO'
+                        )
                     ORDER BY c.codigo
                 """),
                 {'pid': proyecto_id}

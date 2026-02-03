@@ -502,24 +502,21 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
                     precio = self._limpiar_numero(datos.get('precio_str', '0'))
                     importe = self._limpiar_numero(datos.get('importe_str', '0'))
 
-                    # SOLUCIÓN 3: Solo actualizar si la partida actual NO tiene valores válidos
-                    # Esto previene sobrescribir valores correctos con datos de otra partida
-                    # que no fue detectada como PARTIDA_HEADER (ej: partidas sin unidad antes de Solución 2)
-                    if partida_actual['importe'] == 0 or partida_actual['importe'] is None:
-                        # Partida sin valores: actualizar normalmente
-                        partida_actual['cantidad'] = cantidad if cantidad else 0.0
-                        partida_actual['precio'] = precio if precio else 0.0
-                        partida_actual['importe'] = importe if importe else 0.0
-                        logger.debug(f"Partida actualizada con datos: {partida_actual['codigo']} = {importe}")
-                    else:
-                        # Partida YA tiene valores: probablemente sea una partida nueva sin unidad
-                        # que no fue detectada como PARTIDA_HEADER
-                        logger.warning(
-                            f"⚠️ PARTIDA_DATOS ignorada: partida actual '{partida_actual['codigo']}' "
-                            f"ya tiene importe={partida_actual['importe']}. "
-                            f"Los datos (cantidad={cantidad}, precio={precio}, importe={importe}) "
-                            f"probablemente pertenecen a una partida sin unidad no detectada."
+                    # SIEMPRE actualizar con cada nueva línea PARTIDA_DATOS
+                    # Esto permite que partidas con mediciones intermedias usen la ÚLTIMA línea como total
+                    # Ejemplo: partida con mediciones "1 5,43 5,43" seguida de total "5,43 31,45 170,77"
+                    if partida_actual['importe'] > 0:
+                        # Si ya tenía valores, registrar que se están sobrescribiendo (caso de mediciones múltiples)
+                        logger.debug(
+                            f"🔄 Actualizando partida '{partida_actual['codigo']}': "
+                            f"importe anterior={partida_actual['importe']} → nuevo={importe} "
+                            f"(mediciones intermedias o línea de total)"
                         )
+
+                    # Actualizar siempre con los valores más recientes
+                    partida_actual['cantidad'] = cantidad if cantidad else 0.0
+                    partida_actual['precio'] = precio if precio else 0.0
+                    partida_actual['importe'] = importe if importe else 0.0
                     # ❌ NO cerrar partida aquí - puede haber más líneas de descripción después
 
             elif tipo == TipoLinea.TOTAL:

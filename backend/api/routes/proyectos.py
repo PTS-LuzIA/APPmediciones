@@ -311,7 +311,7 @@ async def actualizar_proyecto(
         nombre=proyecto_update.nombre,
         descripcion=proyecto_update.descripcion,
         fase_actual=proyecto_update.fase_actual,
-        total_presupuesto=proyecto_update.total_presupuesto
+        presupuesto_total=proyecto_update.presupuesto_total
     )
 
     return ProyectoResponse.model_validate(updated_proyecto)

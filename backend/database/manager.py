@@ -156,8 +156,8 @@ class DatabaseManager:
         return self.session.query(Proyecto).filter_by(id=proyecto_id).first()
 
     def listar_proyectos(self, usuario_id: int, limite: int = 50, offset: int = 0) -> List[Proyecto]:
-        """Lista proyectos de un usuario"""
-        return (
+        """Lista proyectos de un usuario con presupuesto total calculado"""
+        proyectos = (
             self.session.query(Proyecto)
             .filter_by(usuario_id=usuario_id)
             .order_by(Proyecto.fecha_creacion.desc())
@@ -165,6 +165,78 @@ class DatabaseManager:
             .offset(offset)
             .all()
         )
+
+        # Calcular presupuesto_total y estadísticas para cada proyecto
+        for proyecto in proyectos:
+            # Obtener totales y conteo de capítulos
+            stats = self.session.execute(
+                text("""
+                    SELECT
+                        COALESCE(SUM(c.total), 0) as total,
+                        COUNT(*) as num_capitulos
+                    FROM appmediciones.conceptos c
+                    WHERE c.proyecto_id = :pid
+                      AND c.tipo = 'CAPITULO'
+                """),
+                {'pid': proyecto.id}
+            ).fetchone()
+
+            # Asignar el total calculado (evitar None -> NaN en frontend)
+            proyecto.presupuesto_total = float(stats[0]) if stats and stats[0] else 0.0
+
+            # Asignar num_capitulos como atributo dinámico
+            proyecto.num_capitulos = int(stats[1]) if stats and stats[1] else 0
+
+            # Verificar si tiene mediciones auxiliares
+            mediciones_count = self.session.execute(
+                text("""
+                    SELECT COUNT(*) FROM appmediciones.mediciones m
+                    INNER JOIN appmediciones.conceptos c ON m.concepto_id = c.id
+                    WHERE c.proyecto_id = :pid
+                """),
+                {'pid': proyecto.id}
+            ).scalar()
+            proyecto.tiene_mediciones_auxiliares = (mediciones_count or 0) > 0
+
+        return proyectos
+
+    def actualizar_proyecto(
+        self,
+        proyecto_id: int,
+        nombre: str = None,
+        descripcion: str = None,
+        fase_actual: int = None,
+        presupuesto_total: float = None
+    ) -> Optional[Proyecto]:
+        """
+        Actualiza datos de un proyecto.
+
+        Args:
+            proyecto_id: ID del proyecto
+            nombre: Nuevo nombre (opcional)
+            descripcion: Nueva descripción (opcional)
+            fase_actual: Nueva fase (opcional)
+            presupuesto_total: Nuevo presupuesto total (opcional)
+
+        Returns:
+            Proyecto actualizado o None si no existe
+        """
+        proyecto = self.obtener_proyecto(proyecto_id)
+        if not proyecto:
+            return None
+
+        if nombre is not None:
+            proyecto.nombre = nombre
+        if descripcion is not None:
+            proyecto.descripcion = descripcion
+        if fase_actual is not None:
+            proyecto.fase_actual = fase_actual
+        if presupuesto_total is not None:
+            proyecto.presupuesto_total = presupuesto_total
+
+        self.session.commit()
+        logger.info(f"✓ Proyecto actualizado: {proyecto_id}")
+        return proyecto
 
     def eliminar_proyecto(self, proyecto_id: int) -> bool:
         """

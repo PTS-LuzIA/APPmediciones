@@ -24,7 +24,7 @@ class ProyectoUpdate(BaseModel):
     nombre: Optional[str] = None
     descripcion: Optional[str] = None
     fase_actual: Optional[int] = None
-    total_presupuesto: Optional[Decimal] = None
+    presupuesto_total: Optional[Decimal] = None
 
 
 class ProyectoResponse(ProyectoBase):
@@ -33,9 +33,11 @@ class ProyectoResponse(ProyectoBase):
     usuario_id: int
     pdf_path: Optional[str] = None
     fase_actual: int
-    total_presupuesto: Optional[Decimal] = None
+    presupuesto_total: Decimal = Decimal(0)
     fecha_creacion: datetime
     fecha_actualizacion: datetime
+    tiene_mediciones_auxiliares: bool = False
+    num_capitulos: int = 0
 
     class Config:
         from_attributes = True
@@ -63,5 +65,5 @@ class EstadisticasProyecto(BaseModel):
     num_partidas: int
     num_descompuestos: int
     num_mediciones: int
-    total_presupuesto: Optional[Decimal]
+    presupuesto_total: Decimal = Decimal(0)
     niveles_profundidad: int

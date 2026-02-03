@@ -157,7 +157,7 @@ class IAService:
                 'exito': True,
                 'partidas_sugeridas': resultado.get('partidas_sugeridas', []),
                 'explicacion': resultado.get('explicacion', ''),
-                'total_sugerido': sum(p.get('importe', 0) for p in resultado.get('partidas_sugeridas', []))
+                'total_sugerido': sum(float(p.get('importe') or 0) for p in resultado.get('partidas_sugeridas', []))
             }
 
         except Exception as e:
@@ -209,7 +209,7 @@ PARTIDAS YA EXTRAÍDAS ({len(partidas_existentes)}):
 {"... (y más)" if len(partidas_existentes) > 20 else ""}
 
 TEXTO DEL PDF (secciones relevantes):
-{seccion_pdf[:5000]}
+{seccion_pdf[:30000]}
 
 INSTRUCCIONES:
 1. Busca en el texto de arriba el {tipo} "{codigo}"
@@ -286,13 +286,14 @@ Responde SOLO en JSON válido:
                 seccion_lines.append(line)
                 contador_lineas += 1
 
-                # Limitar a 200 líneas para no exceder límites de tokens
-                if contador_lineas > 200:
+                # Limitar a 1000 líneas para no exceder límites de tokens
+                # (suficiente para capturar capítulos completos grandes)
+                if contador_lineas > 1000:
                     break
 
         if not seccion_lines:
-            # Si no encontramos la sección específica, devolver todo el texto
-            return texto_pdf[:5000]
+            # Si no encontramos la sección específica, devolver hasta 30000 caracteres
+            return texto_pdf[:30000]
 
         return '\n'.join(seccion_lines)
 
