@@ -52,10 +52,20 @@ class PDFExtractor:
 
         # Patrones comunes de cabeceras que se repiten en cada página
         # Se usan patrones genéricos que aplican a la mayoría de presupuestos
+        # IMPORTANTE: Incluir variantes con columnas de mediciones (UDS, LONGITUD, etc.)
         self.header_patterns = [
             'PRESUPUESTO',
+            'PRESUPUESTO Y MEDICIONES',  # Variante común en presupuestos con mediciones
             'CÓDIGO RESUMEN CANTIDAD PRECIO IMPORTE',
+            'CÓDIGO RESUMEN UDS LONGITUD ANCHURA ALTURA PARCIALES CANTIDAD PRECIO IMPORTE',  # Versión extendida con mediciones
             # El nombre del proyecto se detectará dinámicamente
+        ]
+
+        # Patrones adicionales para coincidencia parcial (cabeceras que pueden variar)
+        # Estos se verifican con "startswith" en lugar de coincidencia exacta
+        self.header_partial_patterns = [
+            'CÓDIGO RESUMEN',  # Cualquier cabecera que empiece así
+            'PRESUPUESTO Y',   # "PRESUPUESTO Y MEDICIONES", etc.
         ]
 
     def extraer_todo(self) -> Dict:
@@ -187,6 +197,16 @@ class PDFExtractor:
                 if lineas_despues_footer < lineas_antes_footer:
                     logger.info(f"🗑️  Pies de página eliminados: {lineas_antes_footer - lineas_despues_footer} líneas")
 
+                # Reordenar totales de partida que aparecen después de TOTAL CAPÍTULO (problema de salto de página)
+                resultado['all_lines'] = self._reordenar_totales_partida_tras_salto_pagina(resultado['all_lines'])
+
+                # Fusionar líneas TOTAL fragmentadas (importe en línea separada)
+                lineas_antes_fusion = len(resultado['all_lines'])
+                resultado['all_lines'] = self._fusionar_totales_fragmentados(resultado['all_lines'])
+                fusiones_realizadas = lineas_antes_fusion - len(resultado['all_lines'])
+                if fusiones_realizadas > 0:
+                    logger.info(f"🔗 Líneas TOTAL fusionadas: {fusiones_realizadas} fusiones")
+
                 # NOTA: La fusión de datos numéricos separados ya NO es necesaria porque
                 # las páginas de presupuesto se detectan y procesan con extract_text() estándar,
                 # que preserva correctamente la alineación de números con partidas.
@@ -276,23 +296,38 @@ class PDFExtractor:
                 lineas_filtradas.append(linea)
                 continue
 
-            # Verificar si es una cabecera conocida (debe ser COINCIDENCIA EXACTA)
-            # Ya NO usamos substring matching (patron in linea) porque filtraba partidas incorrectamente
+            # Verificar si es una cabecera conocida
             es_cabecera = False
+            patron_coincidente = None
+
+            # 1. Verificar coincidencia EXACTA con patrones dinámicos
             for patron in patrones_dinamicos:
-                if linea_limpia == patron:  # ← Solo coincidencia EXACTA
+                if linea_limpia == patron:
                     es_cabecera = True
-                    # Si ya vimos esta cabecera, omitirla
-                    if patron in cabeceras_vistas:
-                        break
-                    else:
-                        # Primera vez que vemos esta cabecera, marcarla como vista
-                        cabeceras_vistas.add(patron)
-                        lineas_filtradas.append(linea)
+                    patron_coincidente = patron
                     break
 
-            # Si no es cabecera, añadirla siempre
-            if not es_cabecera:
+            # 2. Si no hubo coincidencia exacta, verificar patrones PARCIALES
+            # Estos son cabeceras que pueden variar ligeramente
+            if not es_cabecera and hasattr(self, 'header_partial_patterns'):
+                for patron_parcial in self.header_partial_patterns:
+                    if linea_limpia.startswith(patron_parcial):
+                        es_cabecera = True
+                        patron_coincidente = linea_limpia  # Usar línea completa como patrón
+                        logger.debug(f"Cabecera parcial detectada: '{linea_limpia[:60]}' (patrón: '{patron_parcial}')")
+                        break
+
+            # Si es cabecera, aplicar lógica de filtrado
+            if es_cabecera:
+                # Si ya vimos esta cabecera, omitirla
+                if patron_coincidente in cabeceras_vistas:
+                    logger.debug(f"Cabecera repetida filtrada: '{linea_limpia[:60]}'")
+                else:
+                    # Primera vez que vemos esta cabecera, marcarla como vista
+                    cabeceras_vistas.add(patron_coincidente)
+                    lineas_filtradas.append(linea)
+            else:
+                # Si no es cabecera, añadirla siempre
                 lineas_filtradas.append(linea)
 
         return lineas_filtradas, titulo_proyecto
@@ -496,6 +531,229 @@ class PDFExtractor:
 
         return lineas_filtradas
 
+    def _reordenar_totales_partida_tras_salto_pagina(self, lineas: List[str]) -> List[str]:
+        """
+        Reordena totales de partida que aparecen DESPUÉS del TOTAL CAPÍTULO debido a saltos de página.
+
+        Problema: En algunos PDFs, cuando hay un salto de página justo antes del TOTAL CAPÍTULO,
+        los totales de la última partida (CANTIDAD PRECIO IMPORTE) aparecen DESPUÉS de la línea
+        TOTAL CAPÍTULO debido a cómo se extraen las columnas.
+
+        Ejemplo ANTES:
+            Solera Edificación instalaciones 1 28,00 0,10 2,80   (última medición)
+            PRESUPUESTO Y MEDICIONES                              (cabecera de página)
+            TOTAL CAPÍTULO 02 CIMENTACIONES...................   (TOTAL sin importe)
+            ANCHURA ALTURA PARCIALES CANTIDAD PRECIO IMPORTE     (cabecera fragmentada)
+            44,83 20,92 937,84                                   (totales de última partida)
+            ......... 12.050,55                                  (importe del capítulo)
+
+        Ejemplo DESPUÉS:
+            Solera Edificación instalaciones 1 28,00 0,10 2,80
+            PRESUPUESTO Y MEDICIONES
+            44,83 20,92 937,84                                   (movido ANTES del TOTAL)
+            TOTAL CAPÍTULO 02 CIMENTACIONES................... 12.050,55 (fusionado)
+
+        Args:
+            lineas: Lista de líneas de texto
+
+        Returns:
+            Lista de líneas reordenadas
+        """
+        import re
+
+        # Patrón para línea TOTAL CAPÍTULO/SUBCAPÍTULO sin importe
+        patron_total_sin_importe = re.compile(
+            r'^TOTAL\s+(SUBCAPÍTULO|CAPÍTULO|APARTADO)\s+([A-Z]?\d{1,2}(?:\.\d{1,2})*)\s+',
+            re.IGNORECASE
+        )
+
+        # Patrón para línea con solo 3 números (totales de partida: cantidad, precio, importe)
+        patron_tres_numeros = re.compile(
+            r'^\s*(\d{1,3}(?:\.\d{3})*,\d{1,4})\s+(\d{1,3}(?:\.\d{3})*,\d{1,4})\s+(\d{1,3}(?:\.\d{3})*,\d{1,4})\s*$'
+        )
+
+        # Patrón para líneas que son basura (cabeceras fragmentadas)
+        patron_basura = re.compile(
+            r'^(ANCHURA|ALTURA|PARCIALES|CANTIDAD|PRECIO|IMPORTE|UDS|LONGITUD|CÓDIGO|RESUMEN|'
+            r'PRESUPUESTO|CÓDIGO\s+RESUMEN)',
+            re.IGNORECASE
+        )
+
+        lineas_procesadas = []
+        i = 0
+
+        while i < len(lineas):
+            linea = lineas[i].strip()
+
+            # Buscar línea TOTAL sin importe al final
+            if patron_total_sin_importe.match(linea) and not re.search(r'\d{1,3}(?:\.\d{3})*,\d{2}\s*$', linea):
+                # Encontramos un TOTAL sin importe, buscar si hay totales de partida después
+                posicion_total = i
+                totales_partida_linea = None
+                totales_partida_idx = None
+
+                # Buscar en las siguientes líneas (hasta 8)
+                for j in range(i + 1, min(i + 8, len(lineas))):
+                    linea_siguiente = lineas[j].strip()
+
+                    # Saltar líneas vacías y basura
+                    if not linea_siguiente or patron_basura.match(linea_siguiente):
+                        continue
+
+                    # ¿Es línea con 3 números (totales de partida)?
+                    if patron_tres_numeros.match(linea_siguiente):
+                        totales_partida_linea = linea_siguiente
+                        totales_partida_idx = j
+                        logger.info(f"🔄 Detectados totales de partida desplazados: '{totales_partida_linea}' (posición {j})")
+                        break
+
+                    # Si encontramos línea con puntos + importe, es el importe del TOTAL, no buscar más
+                    if re.match(r'^\.{10,}', linea_siguiente):
+                        break
+
+                # Si encontramos totales de partida desplazados, reordenar
+                if totales_partida_linea and totales_partida_idx:
+                    # Añadir los totales de partida ANTES del TOTAL
+                    lineas_procesadas.append(totales_partida_linea)
+                    logger.info(f"🔄 Totales de partida movidos antes de TOTAL: '{totales_partida_linea}'")
+
+                    # Añadir las líneas intermedias (excluyendo los totales que ya añadimos)
+                    for k in range(i, totales_partida_idx):
+                        if k != totales_partida_idx:  # Ya añadimos los totales
+                            lineas_procesadas.append(lineas[k])
+
+                    # Continuar desde después de los totales
+                    i = totales_partida_idx + 1
+                    continue
+
+            # Si no es caso especial, añadir línea normal
+            lineas_procesadas.append(lineas[i])
+            i += 1
+
+        return lineas_procesadas
+
+    def _fusionar_totales_fragmentados(self, lineas: List[str]) -> List[str]:
+        """
+        Fusiona líneas TOTAL que están fragmentadas (importe en línea separada).
+
+        Problema detectado: En algunos PDFs, las líneas TOTAL se extraen así:
+            TOTAL CAPÍTULO 02 CIMENTACIONES...................
+            ANCHURA ALTURA PARCIALES CANTIDAD PRECIO IMPORTE  (cabecera fragmentada)
+            44,83 20,92 937,84
+            ............................................................................................... 12.050,55
+
+        Este método detecta estas situaciones y fusiona la línea TOTAL con su importe.
+
+        Estrategia:
+        1. Detectar líneas que empiezan con "TOTAL CAPÍTULO" o "TOTAL SUBCAPÍTULO" sin importe al final
+        2. Buscar en las siguientes líneas (hasta 10) una que tenga puntos suspensivos + importe
+        3. Fusionar ambas líneas
+        4. Eliminar las líneas intermedias que son basura (cabeceras fragmentadas, etc.)
+
+        Args:
+            lineas: Lista de líneas de texto
+
+        Returns:
+            Lista de líneas con TOTALES fusionados
+        """
+        import re
+
+        # Patrón para línea TOTAL sin importe al final
+        # Ejemplo: "TOTAL CAPÍTULO 02 CIMENTACIONES..................."
+        patron_total_sin_importe = re.compile(
+            r'^TOTAL\s+(SUBCAPÍTULO|CAPÍTULO|APARTADO)?\s*([A-Z]?\d{1,2}(?:\.\d{1,2})*)\s+([A-ZÁÉÍÓÚÑ][^0-9]*?)\.{3,}\s*$',
+            re.IGNORECASE
+        )
+
+        # Patrón alternativo: TOTAL sin tipo pero con código
+        # Ejemplo: "TOTAL 02 CIMENTACIONES..................."
+        patron_total_simple_sin_importe = re.compile(
+            r'^TOTAL\s+(\d{1,2}(?:\.\d{1,2})*)\s+([A-ZÁÉÍÓÚÑ][^0-9]*?)\.{3,}\s*$',
+            re.IGNORECASE
+        )
+
+        # Patrón para línea con puntos suspensivos + importe
+        # Ejemplo: "............................................................................................... 12.050,55"
+        patron_puntos_importe = re.compile(
+            r'^\.{10,}\s*(\d{1,3}(?:\.\d{3})*,\d{2})\s*$'
+        )
+
+        # Patrón para líneas que son basura (cabeceras fragmentadas, números sueltos, paginación)
+        # Estas líneas se saltan al buscar el importe de un TOTAL fragmentado
+        patron_basura = re.compile(
+            r'^(ANCHURA|ALTURA|PARCIALES|CANTIDAD|PRECIO|IMPORTE|UDS|LONGITUD|CÓDIGO|RESUMEN|'
+            r'PRESUPUESTO\s+Y\s+MEDICIONES|PRESUPUESTO|'  # Cabeceras de página
+            r'Página\s+\d+|Pág\.?\s+\d+|'  # Paginación
+            r'\d+,\d+\s+\d+,\d+\s+\d+,\d+|'  # Tres números separados (mediciones)
+            r'[\d.,\s]+)$',  # Solo números y separadores
+            re.IGNORECASE
+        )
+
+        # Patrón adicional para líneas que empiezan con palabras de cabecera
+        patron_cabecera_fragmentada = re.compile(
+            r'^(CÓDIGO\s+RESUMEN|ANCHURA\s+ALTURA|UDS\s+LONGITUD)',
+            re.IGNORECASE
+        )
+
+        lineas_procesadas = []
+        i = 0
+
+        while i < len(lineas):
+            linea = lineas[i].strip()
+
+            # Verificar si es una línea TOTAL sin importe
+            match_total = patron_total_sin_importe.match(linea)
+            if not match_total:
+                match_total = patron_total_simple_sin_importe.match(linea)
+
+            if match_total:
+                # Buscar el importe en las siguientes líneas
+                importe_encontrado = None
+                lineas_a_saltar = 0
+
+                for j in range(i + 1, min(i + 10, len(lineas))):
+                    linea_siguiente = lineas[j].strip()
+
+                    # ¿Es línea con puntos + importe?
+                    match_importe = patron_puntos_importe.match(linea_siguiente)
+                    if match_importe:
+                        importe_encontrado = match_importe.group(1)
+                        lineas_a_saltar = j - i
+                        break
+
+                    # ¿Es basura que debemos saltar?
+                    if (patron_basura.match(linea_siguiente) or
+                        patron_cabecera_fragmentada.match(linea_siguiente) or
+                        not linea_siguiente):
+                        continue
+
+                    # Si encontramos otra línea significativa (no basura), dejamos de buscar
+                    # para evitar fusiones incorrectas
+                    if linea_siguiente.startswith('TOTAL') or re.match(r'^\d{1,2}(?:\.\d{1,2})*\s+', linea_siguiente):
+                        break
+
+                if importe_encontrado:
+                    # Fusionar: TOTAL ... + importe
+                    linea_fusionada = linea.rstrip('.') + ' ' + importe_encontrado
+                    lineas_procesadas.append(linea_fusionada)
+                    logger.info(f"🔗 TOTAL fusionado: '{linea[:50]}...' + '{importe_encontrado}'")
+
+                    # Saltar las líneas intermedias (basura + línea con importe)
+                    i += lineas_a_saltar + 1
+                    continue
+                else:
+                    # No encontramos importe, añadir línea tal cual
+                    # ADVERTENCIA: El TOTAL no tiene importe - posible problema de extracción de PDF
+                    logger.warning(f"⚠️ TOTAL sin importe detectado: '{linea[:80]}...' - El importe puede estar en una columna no extraída del PDF")
+                    lineas_procesadas.append(lineas[i])
+            else:
+                # No es línea TOTAL fragmentada, añadir tal cual
+                lineas_procesadas.append(lineas[i])
+
+            i += 1
+
+        return lineas_procesadas
+
     def _extraer_pagina(self, page, num_pagina: int) -> Dict:
         """
         Extrae el contenido de una página individual con detección de columnas
@@ -509,7 +767,8 @@ class PDFExtractor:
         """
         # Si la detección de columnas está desactivada, usar método simple
         if not self.detect_columns or not self.column_detector:
-            texto = page.extract_text()
+            # MEJORA: Usar layout=True para preservar mejor las columnas tabulares anchas
+            texto = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
             if not texto:
                 return {'num': num_pagina, 'text': '', 'lines': [], 'layout': None}
 
@@ -543,8 +802,8 @@ class PDFExtractor:
         # y deben procesarse con extract_text() estándar, NO con extracción por bbox
         es_pagina_presupuesto = False
         if num_columnas > 1:
-            # Extraer texto preliminar para verificar
-            texto_preliminar = page.extract_text()
+            # Extraer texto preliminar para verificar (usar layout=True para mejor detección)
+            texto_preliminar = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
             if texto_preliminar:
                 lineas_preliminar = texto_preliminar.split('\n')
                 for linea in lineas_preliminar[:10]:  # Revisar primeras 10 líneas
@@ -564,7 +823,9 @@ class PDFExtractor:
         # ESTRATEGIA 1: Columna simple O página de presupuesto - Usar método original (extract_text)
         # Más rápido y preserva mejor el orden original del PDF
         if num_columnas == 1 or es_pagina_presupuesto:
-            texto = page.extract_text()
+            # MEJORA: Usar layout=True para preservar mejor las columnas tabulares anchas
+            # Esto ayuda cuando hay columnas de importes alineadas a la derecha que están lejos del texto principal
+            texto = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
             if not texto:
                 lineas = []
             else:

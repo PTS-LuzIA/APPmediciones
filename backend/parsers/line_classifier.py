@@ -310,6 +310,16 @@ class LineClassifier:
                     if patron_importe.match(codigo):
                         logger.debug(f"Código rechazado (formato de importe): '{codigo}'")
                         # No es una partida, continuar con otras clasificaciones
+                    # VALIDACIÓN: Rechazar palabras comunes que NO son códigos de partida
+                    # Estas son palabras típicas en líneas de medición, NO códigos
+                    elif cls._es_palabra_comun_medicion(codigo):
+                        logger.debug(f"Código rechazado (palabra común de medición): '{codigo}'")
+                        # No es una partida, es una línea de medición
+                    # VALIDACIÓN: Código debe tener al menos un dígito para ser válido
+                    # Los códigos de partida reales son: 01.01, DEM06, E04SM090, APUDm23, etc.
+                    elif not any(c.isdigit() for c in codigo):
+                        logger.debug(f"Código rechazado (sin dígitos): '{codigo}'")
+                        # No es una partida válida
                     else:
                         logger.info(f"🔍 Partida sin unidad detectada: '{codigo}' - '{resumen[:40]}...' → Unidad='X'")
 
@@ -467,6 +477,18 @@ class LineClassifier:
                                 }
                             }
 
+                        # Validación: rechazar palabras comunes de medición
+                        if cls._es_palabra_comun_medicion(codigo_detectado):
+                            logger.debug(f"Código rechazado (palabra común): '{codigo_detectado}'")
+                            return {
+                                'tipo': TipoLinea.PARTIDA_DATOS,
+                                'datos': {
+                                    'cantidad_str': numeros_match.group(1),
+                                    'precio_str': numeros_match.group(2),
+                                    'importe_str': numeros_match.group(3)
+                                }
+                            }
+
                         # Parece una partida válida con unidad solapada/faltante
                         logger.warning(f"⚠️  Partida sin unidad detectada: código='{codigo_detectado}', título='{titulo_detectado[:30]}...'")
                         logger.warning(f"   Probable solapamiento visual - asignando unidad='X'")
@@ -484,7 +506,27 @@ class LineClassifier:
                             }
                         }
 
-                # Si no matchea ningún patrón, clasificar como PARTIDA_DATOS
+                # Si no matchea ningún patrón de partida, verificar si es línea de medición o de totales
+                # Línea de medición: "Zona edificación 1 263,48 263,48" (texto descriptivo + números)
+                # Línea de totales: "         613,48 0,29 177,91" (solo números, posiblemente con espacios)
+
+                # Si tiene texto descriptivo al inicio, es línea de medición (NO partida, NO datos)
+                if linea_sin_numeros and not linea_sin_numeros[0].isdigit():
+                    # Verificar si es texto descriptivo (palabra que empiece con letra)
+                    primera_palabra = linea_sin_numeros.split()[0] if linea_sin_numeros.split() else ''
+                    if primera_palabra and primera_palabra[0].isalpha():
+                        # Es línea de medición con texto descriptivo
+                        # Si hay partida activa, tratarla como descripción; sino, ignorar
+                        if contexto and contexto.get('partida_activa'):
+                            logger.debug(f"Línea de medición detectada (con texto): '{linea[:50]}...'")
+                            return {
+                                'tipo': TipoLinea.PARTIDA_DESCRIPCION,
+                                'datos': {'texto': linea}
+                            }
+                        else:
+                            return {'tipo': TipoLinea.IGNORAR, 'datos': None}
+
+                # Si no tiene texto descriptivo (solo números), es PARTIDA_DATOS
                 return {
                     'tipo': TipoLinea.PARTIDA_DATOS,
                     'datos': {
@@ -505,6 +547,11 @@ class LineClassifier:
             # Esto evita códigos como "Puerta", "migón" que son palabras comunes
             if not any(c.isdigit() or c == '.' for c in codigo):
                 # No es un código válido, ignorar
+                return {'tipo': TipoLinea.IGNORAR, 'datos': None}
+
+            # Validación: rechazar palabras comunes de medición
+            if cls._es_palabra_comun_medicion(codigo):
+                logger.debug(f"Código rechazado (palabra común): '{codigo}'")
                 return {'tipo': TipoLinea.IGNORAR, 'datos': None}
 
             # Caso normal: partida con código + unidad + resumen
@@ -579,7 +626,7 @@ class LineClassifier:
             # NO procesar si:
             # - El código es demasiado corto (< 8 chars) [MEJORADO: era 5]
             # - El código NO tiene números intercalados [NUEVO]
-            # - El código es una palabra común [NUEVO]
+            # - El código es una palabra común [NUEVO] - usa método centralizado
             # - El código termina en punto (105/2008.)
             # - El código tiene guion seguido de mayúscula (NTE-ADD)
             # - El código es una unidad
@@ -587,6 +634,7 @@ class LineClassifier:
             # - El título no tiene al menos 2 palabras
             if (len(codigo_detectado) >= 8 and
                 tiene_numeros and
+                not cls._es_palabra_comun_medicion(codigo_detectado) and
                 codigo_detectado not in palabras_comunes and
                 not codigo_detectado.endswith('.') and
                 '-' not in codigo_detectado[-4:] and
@@ -628,6 +676,86 @@ class LineClassifier:
         linea_upper = linea.upper()
         coincidencias = sum(1 for h in headers if h in linea_upper)
         return coincidencias >= 3
+
+    @staticmethod
+    def _es_palabra_comun_medicion(codigo: str) -> bool:
+        """
+        Detecta si un supuesto "código" es en realidad una palabra común
+        que aparece en líneas de medición, NO un código de partida real.
+
+        Los códigos de partida reales son: 01.01, DEM06, E04SM090, APUDm23, etc.
+        Las palabras comunes en mediciones son: Zona, Edificación, Saneamiento, Nave, etc.
+
+        Args:
+            codigo: String a verificar
+
+        Returns:
+            True si es una palabra común de medición (NO es código de partida)
+        """
+        # Lista de palabras comunes en líneas de medición
+        # Estas palabras describen ubicaciones, elementos o zonas, NO son códigos
+        palabras_comunes = {
+            # Ubicaciones y zonas
+            'Zona', 'zona', 'ZONA',
+            'Edificación', 'edificación', 'EDIFICACIÓN', 'Edificacion', 'edificacion', 'EDIFICACION',
+            'Nave', 'nave', 'NAVE',
+            'Solera', 'solera', 'SOLERA',
+            'Saneamiento', 'saneamiento', 'SANEAMIENTO',
+            'Instalaciones', 'instalaciones', 'INSTALACIONES',
+            'Cimentación', 'cimentación', 'CIMENTACIÓN', 'Cimentacion', 'cimentacion', 'CIMENTACION',
+            'Cubierta', 'cubierta', 'CUBIERTA',
+            'Fachada', 'fachada', 'FACHADA',
+            'Interior', 'interior', 'INTERIOR',
+            'Exterior', 'exterior', 'EXTERIOR',
+            'Planta', 'planta', 'PLANTA',
+            'Sótano', 'sótano', 'SÓTANO', 'Sotano', 'sotano', 'SOTANO',
+            'Azotea', 'azotea', 'AZOTEA',
+            'Terraza', 'terraza', 'TERRAZA',
+            'Jardín', 'jardín', 'JARDÍN', 'Jardin', 'jardin', 'JARDIN',
+            'Patio', 'patio', 'PATIO',
+            'Garaje', 'garaje', 'GARAJE',
+            'Almacén', 'almacén', 'ALMACÉN', 'Almacen', 'almacen', 'ALMACEN',
+            'Oficina', 'oficina', 'OFICINA',
+            'Local', 'local', 'LOCAL',
+            'Vivienda', 'vivienda', 'VIVIENDA',
+            'Parcela', 'parcela', 'PARCELA',
+
+            # Elementos constructivos
+            'Muro', 'muro', 'MURO',
+            'Zapata', 'zapata', 'ZAPATA',
+            'Zapatas', 'zapatas', 'ZAPATAS',
+            'Viga', 'viga', 'VIGA',
+            'Vigas', 'vigas', 'VIGAS',
+            'Pilar', 'pilar', 'PILAR',
+            'Pilares', 'pilares', 'PILARES',
+            'Forjado', 'forjado', 'FORJADO',
+            'Losa', 'losa', 'LOSA',
+            'Zanja', 'zanja', 'ZANJA',
+            'Zanjas', 'zanjas', 'ZANJAS',
+            'Pozo', 'pozo', 'POZO',
+            'Pozos', 'pozos', 'POZOS',
+            'Arqueta', 'arqueta', 'ARQUETA',
+            'Arquetas', 'arquetas', 'ARQUETAS',
+            'Tubería', 'tubería', 'TUBERÍA', 'Tuberia', 'tuberia', 'TUBERIA',
+            'Canalón', 'canalón', 'CANALÓN', 'Canalon', 'canalon', 'CANALON',
+            'Bajante', 'bajante', 'BAJANTE',
+            'Acometida', 'acometida', 'ACOMETIDA',
+            'Esponjamiento', 'esponjamiento', 'ESPONJAMIENTO',
+
+            # Acciones/operaciones (que aparecen en descripciones de mediciones)
+            'Excavación', 'excavación', 'EXCAVACIÓN', 'Excavacion', 'excavacion', 'EXCAVACION',
+            'Exc', 'exc', 'EXC',  # Abreviatura común
+            'Relleno', 'relleno', 'RELLENO',
+            'Transporte', 'transporte', 'TRANSPORTE',
+            'Deducir', 'deducir', 'DEDUCIR',  # "A deducir zapatas"
+
+            # Otros términos comunes
+            'Total', 'total',  # Pero no 'TOTAL' que es línea de total
+            'Según', 'según', 'SEGÚN', 'Segun', 'segun', 'SEGUN',
+            'Medición', 'medición', 'MEDICIÓN', 'Medicion', 'medicion', 'MEDICION',
+        }
+
+        return codigo in palabras_comunes
 
     @classmethod
     def _unir_descripciones_continuadas(cls, clasificaciones: list) -> list:

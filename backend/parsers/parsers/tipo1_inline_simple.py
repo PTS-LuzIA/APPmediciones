@@ -610,13 +610,17 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
         if 'descripcion_lineas' in partida_final:
             del partida_final['descripcion_lineas']
 
-        # Añadir a la estructura correcta
+        # Añadir a la estructura correcta CON ORDEN CORRECTO
         if subcapitulo_actual:
+            # Asignar orden basado en cantidad de partidas existentes
+            partida_final['orden'] = len(subcapitulo_actual['partidas'])
             subcapitulo_actual['partidas'].append(partida_final)
-            logger.info(f"  ✓ Partida guardada en SUBCAPÍTULO {subcapitulo_actual['codigo']}: {codigo} = {partida_final['importe']:.2f} €")
+            logger.info(f"  ✓ Partida guardada en SUBCAPÍTULO {subcapitulo_actual['codigo']}: {codigo} = {partida_final['importe']:.2f} € (orden: {partida_final['orden']})")
         elif capitulo_actual:
+            # Asignar orden basado en cantidad de partidas existentes
+            partida_final['orden'] = len(capitulo_actual['partidas'])
             capitulo_actual['partidas'].append(partida_final)
-            logger.info(f"  ✓ Partida guardada en CAPÍTULO {capitulo_actual['codigo']}: {codigo} = {partida_final['importe']:.2f} €")
+            logger.info(f"  ✓ Partida guardada en CAPÍTULO {capitulo_actual['codigo']}: {codigo} = {partida_final['importe']:.2f} € (orden: {partida_final['orden']})")
         else:
             logger.warning(f"  ⚠️ Partida {codigo} no se pudo guardar (sin contexto de capítulo/subcapítulo)")
 
