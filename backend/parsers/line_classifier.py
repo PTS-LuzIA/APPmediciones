@@ -220,24 +220,36 @@ class LineClassifier:
             }
 
         # 4. Verificar si es línea TOTAL con formato estándar
+        # Formato: "TOTAL CAPÍTULO 05 ALBAÑILERIA....... 232.335,92"
         match = cls.PATRON_TOTAL.match(linea)
         if match:
+            # Extraer el importe si está en la línea (buscar el último número)
+            numeros = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', linea)
+            importe_str = numeros[-1] if numeros else None
+
             return {
                 'tipo': TipoLinea.TOTAL,
                 'datos': {
                     'nivel': match.group(1),
-                    'codigo': match.group(2) if len(match.groups()) > 1 else None
+                    'codigo': match.group(2) if len(match.groups()) > 1 else None,
+                    'importe_str': importe_str
                 }
             }
 
         # 4b. Verificar formato alternativo de TOTAL (con puntos suspensivos)
+        # Formato: "TOTAL 01.04.01....... 49.578,18"
         match = cls.PATRON_TOTAL_ALTERNATIVO.match(linea)
         if match:
+            # Extraer el importe buscando el último número en la línea
+            numeros = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', linea)
+            importe_str = numeros[-1] if numeros else None
+
             return {
                 'tipo': TipoLinea.TOTAL,
                 'datos': {
                     'nivel': 'SUBCAPÍTULO',
-                    'codigo': match.group(1)
+                    'codigo': match.group(1),
+                    'importe_str': importe_str
                 }
             }
 
@@ -258,11 +270,22 @@ class LineClassifier:
             # Ejemplo: "TOTAL SUBCAPÍTULO C08.01 CALLE TENERIFE......................... 110.289,85"
             total_match = cls.PATRON_TOTAL.match(linea_sin_numeros)
             if total_match:
+                # Extraer el importe del TOTAL (es el último número de la línea)
+                # numeros_match tiene 3 grupos, pero en TOTAL solo hay 1 número (el importe)
+                # Buscar el último número como importe
+                importe_str = numeros_match.group(3) if numeros_match else None  # Usar el tercer número
+                if not importe_str:
+                    # Si no hay 3 números, buscar el último número disponible
+                    if numeros_match:
+                        # Puede ser que solo haya 1 número (el importe)
+                        importe_str = numeros_match.group(1)
+
                 return {
                     'tipo': TipoLinea.TOTAL,
                     'datos': {
                         'nivel': total_match.group(1),
-                        'codigo': total_match.group(2) if len(total_match.groups()) > 1 else None
+                        'codigo': total_match.group(2) if len(total_match.groups()) > 1 else None,
+                        'importe_str': importe_str  # Agregar el importe como string
                     }
                 }
 

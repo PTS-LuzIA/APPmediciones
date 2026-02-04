@@ -50,6 +50,11 @@ class PDFExtractor:
         self.user_id = user_id
         self.proyecto_id = proyecto_id
 
+        # OPTIMIZACIÓN: Cachear el layout de la página 1 para aplicarlo a todo el documento
+        # Los documentos de presupuesto mantienen el mismo formato en todas las páginas
+        self.cached_num_columnas = None  # Se detecta en la primera página
+        self.cached_es_presupuesto = None  # Se detecta en la primera página
+
         # Patrones comunes de cabeceras que se repiten en cada página
         # Se usan patrones genéricos que aplican a la mayoría de presupuestos
         # IMPORTANTE: Incluir variantes con columnas de mediciones (UDS, LONGITUD, etc.)
@@ -767,8 +772,10 @@ class PDFExtractor:
         """
         # Si la detección de columnas está desactivada, usar método simple
         if not self.detect_columns or not self.column_detector:
-            # MEJORA: Usar layout=True para preservar mejor las columnas tabulares anchas
-            texto = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
+            # MEJORA: Usar x_tolerance mayor para capturar columnas numéricas distantes
+            # x_tolerance=10 permite agrupar números que están más separados en la misma línea
+            # NO usar layout=True porque puede dividir incorrectamente tablas en columnas
+            texto = page.extract_text(x_tolerance=10, y_tolerance=3)
             if not texto:
                 return {'num': num_pagina, 'text': '', 'lines': [], 'layout': None}
 
@@ -782,50 +789,67 @@ class PDFExtractor:
                 'layout': None
             }
 
-        # Extraer palabras con posiciones para analizar layout
-        words = page.extract_words()
+        # OPTIMIZACIÓN: Si ya detectamos el layout en la página 1, usar ese valor para todas las páginas
+        # Los documentos de presupuesto son consistentes: si la pág. 1 tiene 1 columna, todas tienen 1 columna
+        if self.cached_num_columnas is not None and self.cached_es_presupuesto is not None:
+            # Usar valores cacheados de la página 1
+            num_columnas = self.cached_num_columnas
+            es_pagina_presupuesto = self.cached_es_presupuesto
+            layout_info = {'num_columnas': num_columnas, 'tipo': 'cached'}
+            logger.debug(f"  Página {num_pagina}: Usando layout cacheado (columnas={num_columnas}, presupuesto={es_pagina_presupuesto})")
+        else:
+            # Primera página: detectar layout y cachear para el resto del documento
+            # Extraer palabras con posiciones para analizar layout
+            words = page.extract_words()
 
-        if not words:
-            return {
-                'num': num_pagina,
-                'text': '',
-                'lines': [],
-                'layout': {'num_columnas': 0, 'tipo': 'vacio'}
-            }
+            if not words:
+                return {
+                    'num': num_pagina,
+                    'text': '',
+                    'lines': [],
+                    'layout': {'num_columnas': 0, 'tipo': 'vacio'}
+                }
 
-        # Analizar layout de la página
-        layout_info = self.column_detector.analizar_layout(words)
-        num_columnas = layout_info.get('num_columnas', 1)
+            # Analizar layout de la página
+            layout_info = self.column_detector.analizar_layout(words)
+            num_columnas = layout_info.get('num_columnas', 1)
 
-        # VALIDACIÓN ESPECIAL: Detectar si es una página de presupuesto con tabla (no multicolumna real)
-        # Las páginas de presupuesto tienen headers como "CÓDIGO RESUMEN CANTIDAD PRECIO IMPORTE"
-        # y deben procesarse con extract_text() estándar, NO con extracción por bbox
-        es_pagina_presupuesto = False
-        if num_columnas > 1:
-            # Extraer texto preliminar para verificar (usar layout=True para mejor detección)
-            texto_preliminar = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
-            if texto_preliminar:
-                lineas_preliminar = texto_preliminar.split('\n')
-                for linea in lineas_preliminar[:10]:  # Revisar primeras 10 líneas
-                    # Buscar header de tabla de presupuesto
-                    if any(keyword in linea for keyword in [
-                        'CÓDIGO RESUMEN CANTIDAD PRECIO IMPORTE',
-                        'CODIGO RESUMEN CANTIDAD PRECIO IMPORTE',
-                        'CAPÍTULO C',
-                        'CAPITULO C',
-                        'SUBCAPÍTULO',
-                        'SUBCAPITULO'
-                    ]):
-                        es_pagina_presupuesto = True
-                        logger.info(f"  Página {num_pagina}: Detectada como página de PRESUPUESTO (usando extract_text estándar)")
-                        break
+            # VALIDACIÓN ESPECIAL: Detectar si es una página de presupuesto con tabla (no multicolumna real)
+            # Las páginas de presupuesto tienen headers como "CÓDIGO RESUMEN CANTIDAD PRECIO IMPORTE"
+            # y deben procesarse con extract_text() estándar, NO con extracción por bbox
+            es_pagina_presupuesto = False
+            if num_columnas > 1:
+                # Extraer texto preliminar para verificar
+                # x_tolerance=10 para capturar headers de tabla completos
+                texto_preliminar = page.extract_text(x_tolerance=10, y_tolerance=3)
+                if texto_preliminar:
+                    lineas_preliminar = texto_preliminar.split('\n')
+                    for linea in lineas_preliminar[:10]:  # Revisar primeras 10 líneas
+                        # Buscar header de tabla de presupuesto
+                        if any(keyword in linea for keyword in [
+                            'CÓDIGO RESUMEN CANTIDAD PRECIO IMPORTE',
+                            'CODIGO RESUMEN CANTIDAD PRECIO IMPORTE',
+                            'CAPÍTULO C',
+                            'CAPITULO C',
+                            'SUBCAPÍTULO',
+                            'SUBCAPITULO'
+                        ]):
+                            es_pagina_presupuesto = True
+                            logger.info(f"  Página {num_pagina}: Detectada como página de PRESUPUESTO (usando extract_text estándar)")
+                            break
+
+            # Cachear para usar en páginas siguientes
+            self.cached_num_columnas = num_columnas
+            self.cached_es_presupuesto = es_pagina_presupuesto
+            logger.info(f"  Página {num_pagina}: Layout detectado y cacheado → columnas={num_columnas}, presupuesto={es_pagina_presupuesto}")
 
         # ESTRATEGIA 1: Columna simple O página de presupuesto - Usar método original (extract_text)
         # Más rápido y preserva mejor el orden original del PDF
         if num_columnas == 1 or es_pagina_presupuesto:
-            # MEJORA: Usar layout=True para preservar mejor las columnas tabulares anchas
-            # Esto ayuda cuando hay columnas de importes alineadas a la derecha que están lejos del texto principal
-            texto = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
+            # MEJORA: Usar x_tolerance mayor para capturar columnas numéricas distantes
+            # x_tolerance=10 permite capturar importes alineados a la derecha en tablas
+            # NO usar layout=True porque puede dividir incorrectamente tablas en columnas verticales
+            texto = page.extract_text(x_tolerance=10, y_tolerance=3)
             if not texto:
                 lineas = []
             else:

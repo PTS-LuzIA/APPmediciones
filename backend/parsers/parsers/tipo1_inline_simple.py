@@ -528,6 +528,23 @@ class ParserV2_Tipo1_InlineSimple(BaseParserV2):
                 # El TOTAL marca el fin de una sección jerárquica
                 codigo_total = datos.get('codigo', '')
 
+                # EXTRAER EL IMPORTE DEL TOTAL si está disponible
+                importe_str = datos.get('importe_str', '')
+                if importe_str:
+                    try:
+                        importe_total = self._parse_numero(importe_str)
+                        # Actualizar el total del capítulo o subcapítulo correspondiente
+                        if codigo_total:
+                            # Buscar el capítulo/subcapítulo con este código
+                            if subcapitulo_actual and subcapitulo_actual.get('codigo') == codigo_total:
+                                subcapitulo_actual['total'] = importe_total
+                                logger.info(f"💰 TOTAL {codigo_total} actualizado: {importe_total:.2f} €")
+                            elif capitulo_actual and capitulo_actual.get('codigo') == codigo_total:
+                                capitulo_actual['total'] = importe_total
+                                logger.info(f"💰 TOTAL {codigo_total} actualizado: {importe_total:.2f} €")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error al parsear importe del TOTAL: {importe_str} - {e}")
+
                 # Si el TOTAL tiene código, verificar qué nivel cerrar
                 if codigo_total and subcapitulo_actual:
                     # Si el TOTAL corresponde al subcapítulo actual, cerrarlo
